@@ -1,0 +1,291 @@
+const express = require('express');
+const mongoose = require('mongoose');
+const router = express.Router();
+const Room = require('../models/Room');
+const User = require('../models/User');
+const auth = require('../middleware/auth');
+
+const CATEGORIES = ['Follow', 'Party', 'For You', 'Ethiopia', 'Rank'];
+const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
+const roomPopulation = [
+  { path: 'ownerId', select: 'username avatar' },
+  { path: 'seats.userId', select: 'username avatar charmPoints' }
+];
+
+const isOwnerOrAdmin = async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.roomId)) {
+      return res.status(400).json({ message: 'Invalid room ID' });
+    }
+
+    const room = await Room.findById(req.params.roomId);
+    if (!room) return res.status(404).json({ message: 'Room not found' });
+
+    const user = await User.findById(req.user.id).select('role');
+    const isOwner = room.ownerId.toString() === req.user.id;
+    const isAdmin = user && user.role === 'ADMIN';
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ message: 'Only the room owner or an admin can moderate.' });
+    }
+
+    req.room = room;
+    return next();
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+router.get('/categories', async (req, res) => {
+  try {
+    const counts = await Room.aggregate([
+      { $group: { _id: '$category', count: { $sum: 1 } } }
+    ]);
+    res.json(CATEGORIES.map((category) => ({
+      category,
+      count: counts.find((entry) => entry._id === category)?.count || 0
+    })));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get('/search', async (req, res) => {
+  try {
+    const page = Number.parseInt(req.query.page, 10) || 1;
+    const limit = Number.parseInt(req.query.limit, 10) || 10;
+    if (page < 1 || limit < 1 || limit > 100) {
+      return res.status(400).json({ message: 'Page must be positive and limit must be between 1 and 100.' });
+    }
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const escapedQuery = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const filter = escapedQuery ? { title: { $regex: escapedQuery, $options: 'i' } } : {};
+    const rooms = await Room.find(filter)
+      .populate(roomPopulation)
+      .skip((page - 1) * limit)
+      .limit(limit);
+    res.json(rooms);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get('/search/owner/:ownerId', async (req, res) => {
+  try {
+    if (!isValidId(req.params.ownerId)) {
+      return res.status(400).json({ message: 'Invalid owner ID' });
+    }
+    const rooms = await Room.find({ ownerId: req.params.ownerId }).populate(roomPopulation);
+    res.json(rooms);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get('/category/:category', async (req, res) => {
+  try {
+    if (!CATEGORIES.includes(req.params.category)) {
+      return res.status(400).json({ message: 'Invalid room category' });
+    }
+    const rooms = await Room.find({ category: req.params.category }).populate(roomPopulation);
+    res.json(rooms);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get('/', async (req, res) => {
+  try {
+    const rooms = await Room.find().populate(roomPopulation).sort({ createdAt: -1 }).limit(100);
+    res.json(rooms);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get('/all', async (req, res) => {
+  try {
+    const rooms = await Room.find({
+      $or: [{ isLive: true }, { isLive: { $exists: false } }]
+    })
+      .populate('ownerId', 'username avatar')
+      .sort({ createdAt: -1 })
+      .limit(100);
+    const activeRooms = rooms.filter((room) => room.ownerId);
+    res.json(activeRooms.map((room) => ({
+      _id: room._id,
+      host: {
+        _id: room.ownerId._id,
+        username: room.ownerId.username,
+        avatar: room.ownerId.avatar
+      },
+      title: room.title,
+      cover: room.coverPhoto || room.banner,
+      category: room.category,
+      membersCount: room.currentListenersCount,
+      isLive: room.isLive
+    })));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.post('/create', auth, async (req, res) => {
+  try {
+    const { title, banner = '', coverPhoto = banner, announcement = '', category = 'For You' } = req.body;
+    if (typeof title !== 'string' || !title.trim() || title.trim().length > 100) {
+      return res.status(400).json({ message: 'Room title is required and must be at most 100 characters.' });
+    }
+    if (!CATEGORIES.includes(category)) {
+      return res.status(400).json({ message: 'Invalid room category' });
+    }
+
+    const seats = Array.from({ length: 25 }, (_, seatIndex) => ({ seatIndex }));
+    const room = await Room.create({
+      title: title.trim(),
+      ownerId: req.user.id,
+      coverPhoto,
+      banner,
+      announcement,
+      category,
+      seats
+    });
+    res.status(201).json({ message: 'Room created successfully', room });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get('/:roomId', auth, async (req, res) => {
+  try {
+    if (!isValidId(req.params.roomId)) {
+      return res.status(400).json({ message: 'Invalid room ID' });
+    }
+    const room = await Room.findById(req.params.roomId).populate(roomPopulation);
+    if (!room) return res.status(404).json({ message: 'Room not found' });
+    if (room.bannedUsers.some((userId) => userId.toString() === req.user.id)) {
+      return res.status(403).json({ message: 'You are banned from entering this room.' });
+    }
+    res.json(room);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.post('/:roomId/seat/:seatIndex/take', auth, async (req, res) => {
+  try {
+    const { roomId, seatIndex: rawSeatIndex } = req.params;
+    const seatIndex = Number.parseInt(rawSeatIndex, 10);
+    if (!isValidId(roomId) || !Number.isInteger(seatIndex) || seatIndex < 0 || seatIndex >= 25) {
+      return res.status(400).json({ message: 'Invalid room or seat ID' });
+    }
+    const room = await Room.findById(roomId);
+    if (!room) return res.status(404).json({ message: 'Room not found' });
+    if (room.bannedUsers.some((userId) => userId.toString() === req.user.id)) {
+      return res.status(403).json({ message: 'You are banned from entering this room.' });
+    }
+
+    const updatedRoom = await Room.findOneAndUpdate(
+      {
+        _id: roomId,
+        bannedUsers: { $ne: req.user.id },
+        'seats.seatIndex': seatIndex,
+        seats: { $elemMatch: { seatIndex, userId: null, isLocked: false } },
+        'seats.userId': { $ne: req.user.id }
+      },
+      { $set: { 'seats.$.userId': req.user.id } },
+      { new: true }
+    );
+    if (!updatedRoom) {
+      const seat = room.seats.find((entry) => entry.seatIndex === seatIndex);
+      const message = !seat ? 'Invalid seat number' :
+        seat.isLocked ? 'This seat is locked by host' :
+          seat.userId ? 'Seat is already occupied' : 'You already occupy a seat in this room';
+      return res.status(400).json({ message });
+    }
+    res.json({ message: `Successfully joined seat ${seatIndex}`, room: updatedRoom });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.post('/:roomId/seat/:seatIndex/leave', auth, async (req, res) => {
+  try {
+    const { roomId, seatIndex: rawSeatIndex } = req.params;
+    const seatIndex = Number.parseInt(rawSeatIndex, 10);
+    if (!isValidId(roomId) || !Number.isInteger(seatIndex) || seatIndex < 0 || seatIndex >= 25) {
+      return res.status(400).json({ message: 'Invalid room or seat ID' });
+    }
+    const room = await Room.findOneAndUpdate(
+      { _id: roomId, seats: { $elemMatch: { seatIndex, userId: req.user.id } } },
+      { $set: { 'seats.$.userId': null } },
+      { new: true }
+    );
+    if (!room) return res.status(400).json({ message: 'You are not on this seat' });
+    res.json({ message: `Left seat ${seatIndex} successfully`, room });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.post('/:roomId/moderate/mute/:seatIndex', auth, isOwnerOrAdmin, async (req, res) => {
+  try {
+    const seatIndex = Number.parseInt(req.params.seatIndex, 10);
+    const seat = req.room.seats.find((entry) => entry.seatIndex === seatIndex);
+    if (!seat) return res.status(400).json({ message: 'Invalid seat number' });
+    seat.isMuted = !seat.isMuted;
+    await req.room.save();
+    res.json({ message: `Seat ${seatIndex} mute status changed`, isMuted: seat.isMuted, room: req.room });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.post('/:roomId/moderate/lock/:seatIndex', auth, isOwnerOrAdmin, async (req, res) => {
+  try {
+    const seatIndex = Number.parseInt(req.params.seatIndex, 10);
+    const seat = req.room.seats.find((entry) => entry.seatIndex === seatIndex);
+    if (!seat) return res.status(400).json({ message: 'Invalid seat number' });
+    seat.isLocked = !seat.isLocked;
+    await req.room.save();
+    res.json({ message: `Seat ${seatIndex} lock status changed`, isLocked: seat.isLocked, room: req.room });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.post('/:roomId/moderate/kick/:userId', auth, isOwnerOrAdmin, async (req, res) => {
+  try {
+    if (!isValidId(req.params.userId)) {
+      return res.status(400).json({ message: 'Invalid user ID' });
+    }
+    const seat = req.room.seats.find((entry) => entry.userId?.toString() === req.params.userId);
+    if (seat) {
+      seat.userId = null;
+      await req.room.save();
+    }
+    res.json({ message: 'User kicked from seat successfully', room: req.room });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.post('/:roomId/moderate/ban/:userId', auth, isOwnerOrAdmin, async (req, res) => {
+  try {
+    if (!isValidId(req.params.userId)) {
+      return res.status(400).json({ message: 'Invalid user ID' });
+    }
+    const targetUserId = req.params.userId;
+    if (!req.room.bannedUsers.some((userId) => userId.toString() === targetUserId)) {
+      req.room.bannedUsers.push(targetUserId);
+      req.room.seats.forEach((seat) => {
+        if (seat.userId?.toString() === targetUserId) seat.userId = null;
+      });
+      await req.room.save();
+    }
+    res.json({ message: 'User banned from room successfully', room: req.room });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+module.exports = router;

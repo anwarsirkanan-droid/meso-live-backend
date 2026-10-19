@@ -1,0 +1,28 @@
+### 1. REGISTER USER TEST
+POST http://localhost:5000/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "Anwar2",
+  "phone": "0911223344",
+  "password": "secretpassword"
+}
+
+###
+
+### 2. LOGIN USER TEST
+POST http://localhost:5000/api/auth/login
+Content-Type: application/json
+
+{
+  "phone": "0911223344",
+  "password": "secretpassword"
+}
+
+###
+
+### 3. LOGOUT USER TEST
+POST http://localhost:5000/api/auth/logout
+Content-Type: application/json
+
+{}
