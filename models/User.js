@@ -1,16 +1,36 @@
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
-  username: { type: String, required: true, unique: true },
+  username: { type: String, required: true, unique: true, trim: true },
   email: { type: String, trim: true, lowercase: true, sparse: true, unique: true },
   googleId: { type: String, default: null },
   password: { type: String, required: true },
+  phoneNumber: {
+    type: String,
+    trim: true,
+    required: [function isProfileComplete() { return this.profileComplete; }, 'Phone number is required']
+  },
+  country: {
+    type: String,
+    trim: true,
+    required: [function isProfileComplete() { return this.profileComplete; }, 'Country is required']
+  },
+  gender: {
+    type: String,
+    enum: ['Male', 'Female', 'Other'],
+    required: [function isProfileComplete() { return this.profileComplete; }, 'Gender is required']
+  },
   role: { 
     type: String, 
     enum: ['USER', 'HOST', 'AGENT', 'ADMIN'], 
     default: 'USER' 
   },
   avatar: { type: String, default: '' },
+  profilePicture: {
+    type: String,
+    default: function defaultProfilePicture() { return this.avatar || ''; }
+  },
+  profileComplete: { type: Boolean, default: false },
   cover: { type: String, default: '' },
   bio: { type: String, default: '' },
   coins: { type: Number, default: 0 },
@@ -18,6 +38,7 @@ const userSchema = new mongoose.Schema({
   totalRechargedCoins: { type: Number, default: 0 },
   charmPoints: { type: Number, default: 0 },
   isVerified: { type: Boolean, default: false },
+  isFaceVerified: { type: Boolean, default: false },
   isOnline: { type: Boolean, default: false },
   lastSeen: { type: Date, default: null },
   followersCount: { type: Number, default: 0 },

@@ -48,7 +48,10 @@ async function createGoogleUser({ email, name, googleId, picture }) {
         googleId,
         password,
         avatar: picture || '',
-        isVerified: true
+        profilePicture: picture || '',
+        profileComplete: false,
+        isVerified: false,
+        isFaceVerified: false
       });
     } catch (error) {
       if (error.code !== 11000) throw error;
@@ -74,7 +77,12 @@ router.post('/register', async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = new User({ username, password: hashedPassword });
+    const newUser = new User({
+      username,
+      password: hashedPassword,
+      isVerified: false,
+      isFaceVerified: false
+    });
     await newUser.save();
 
     const token = jwt.sign(
@@ -86,7 +94,7 @@ router.post('/register', async (req, res) => {
     res.status(201).json({
       message: 'Registration successful!',
       token,
-      user: { id: newUser._id, username: newUser.username }
+      user: { id: newUser._id, username: newUser.username, profileComplete: false }
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -130,7 +138,11 @@ router.post('/login', async (req, res) => {
     res.status(200).json({
       message: 'Login successful!',
       token,
-      user: { id: user._id, username: user.username }
+      user: {
+        id: user._id,
+        username: user.username,
+        profileComplete: user.profileComplete === true
+      }
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -167,8 +179,11 @@ router.post('/google', async (req, res) => {
       }
       user.googleId = payload.sub;
       user.email = email;
-      user.isVerified = true;
+      if (user.role === 'HOST' && user.isFaceVerified !== true) {
+        user.isVerified = false;
+      }
       if (!user.avatar && payload.picture) user.avatar = payload.picture;
+      if (!user.profilePicture && payload.picture) user.profilePicture = payload.picture;
       await user.save();
     } else {
       user = await createGoogleUser({
@@ -187,7 +202,9 @@ router.post('/google', async (req, res) => {
         username: user.username,
         email: user.email,
         role: user.role,
-        avatar: user.avatar
+        avatar: user.avatar,
+        profilePicture: user.profilePicture || user.avatar || '',
+        profileComplete: user.profileComplete === true
       }
     });
   } catch (err) {

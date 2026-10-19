@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const Room = require('../models/Room');
 const Message = require('../models/Message');
 const Agency = require('../models/Agency');
+const AgencyApplication = require('../models/AgencyApplication');
 const User = require('../models/User');
+const Host = require('../models/Host');
 const Follow = require('../models/Follow');
 const Notification = require('../models/Notification');
 const DailyCheckIn = require('../models/DailyCheckIn');
@@ -14,6 +16,7 @@ const ThemeSettings = require('../models/ThemeSettings');
 const AppSettings = require('../models/AppSettings');
 const FaceVerification = require('../models/FaceVerification');
 const Invitation = require('../models/Invitation');
+const Withdrawal = require('../models/Withdrawal');
 const authRoutes = require('../routes/authRoutes');
 const auth = require('../middleware/auth');
 const walletRoutes = require('../routes/walletRoutes');
@@ -28,6 +31,9 @@ const themeRoutes = require('../routes/themeRoutes');
 const appSettingsRoutes = require('../routes/appSettingsRoutes');
 const faceVerificationRoutes = require('../routes/faceVerificationRoutes');
 const invitationRoutes = require('../routes/invitationRoutes');
+const agencyRoutes = require('../routes/agencyRoutes');
+const withdrawRoutes = require('../routes/withdrawRoutes');
+const { AGENCY_TIERS, HOST_WITHDRAWAL_MINIMUM_DIAMONDS } = require('../config/commission');
 const { calculateLuckyGiftMultiplier, processGiftDistribution } = require('../services/giftService');
 const { playMiniGame } = require('../services/gameService');
 const paymentService = require('../services/paymentService');
@@ -71,6 +77,66 @@ test('agency owner/member fields and uppercase user roles validate', async () =>
 
   const agent = new User({ username: 'test-agent', password: 'hashed', role: 'AGENT' });
   await agent.validate();
+  assert.equal(agent.profileComplete, false);
+  assert.equal(agent.profilePicture, '');
+  assert.equal(agent.isVerified, false);
+  assert.equal(agent.isFaceVerified, false);
+  assert.equal(agency.tier, 'D');
+  assert.equal(agency.commissionRate, 0.08);
+
+  const host = new Host({ userId, agencyId: roomId });
+  assert.equal(host.faceVerified, false);
+
+  const incompleteProfile = new User({
+    username: 'incomplete-profile',
+    password: 'hashed',
+    profileComplete: true
+  });
+
+  test('agency commission tiers match the master-spec thresholds and rates', () => {
+    assert.deepEqual(AGENCY_TIERS, [
+      { tier: 'D', minimumTeamIncome: 0, rate: 0.08 },
+      { tier: 'C', minimumTeamIncome: 20_000_000, rate: 0.12 },
+      { tier: 'B', minimumTeamIncome: 100_000_000, rate: 0.16 },
+      { tier: 'A', minimumTeamIncome: 500_000_000, rate: 0.18 },
+      { tier: 'S', minimumTeamIncome: 1_500_000_000, rate: 0.2 },
+      { tier: 'S+', minimumTeamIncome: null, rate: 0.21, requiredSLevelAgencies: 2 },
+    ]);
+  });
+
+  test('withdrawal model enforces minimum, whole diamonds, methods, and admin status', async () => {
+    const valid = new Withdrawal({
+      userId,
+      amountDiamonds: HOST_WITHDRAWAL_MINIMUM_DIAMONDS,
+      amountUsd: 10,
+      method: 'CBE',
+      accountDetails: 'CBE account',
+    });
+    await valid.validate();
+    assert.equal(valid.status, 'PENDING');
+
+    const belowMinimum = new Withdrawal({
+      userId,
+      amountDiamonds: HOST_WITHDRAWAL_MINIMUM_DIAMONDS - 1,
+      amountUsd: 9.99,
+      method: 'BANK',
+      accountDetails: 'Account',
+    });
+    await assert.rejects(belowMinimum.validate());
+  });
+  await assert.rejects(incompleteProfile.validate(), /Phone number is required/);
+
+  const completeProfile = new User({
+    username: 'complete-profile',
+    password: 'hashed',
+    phoneNumber: '+12025550123',
+    country: 'United States',
+    gender: 'Other',
+    profileComplete: true
+  });
+  await completeProfile.validate();
+  assert.equal(User.schema.path('username').options.unique, true);
+
   const invalidRole = new User({ username: 'bad-role', password: 'hashed', role: 'agency' });
   await assert.rejects(invalidRole.validate(), /`agency` is not a valid enum value/);
 });
@@ -106,6 +172,22 @@ test('wallet recharge, gift, and game routes require authentication', () => {
     assert.ok(route, `Expected ${path} route to be registered`);
     assert.equal(route.route.stack[0].handle, auth);
   }
+});
+
+test('Agency Center and withdrawal routes are registered behind authentication', () => {
+  const agencyPaths = ['/center', '/commission', '/host-revenue', '/sub-revenue', '/invite-links', '/sub-apply', '/exit-apply'];
+  for (const path of agencyPaths) {
+    const route = agencyRoutes.stack.find((layer) => layer.route && layer.route.path === path);
+    assert.ok(route, `Expected agency route ${path}`);
+    assert.equal(route.route.stack[0].handle, auth);
+  }
+
+  const requestRoute = withdrawRoutes.stack.find((layer) => layer.route && layer.route.path === '/request');
+  assert.ok(requestRoute);
+  assert.equal(requestRoute.route.stack[0].handle, auth);
+  assert.ok(AgencyApplication.schema.indexes().some(([index, options]) =>
+    index.applicantId === 1 && index.status === 1 && options.unique
+  ));
 });
 
 test('follow, notification, and daily check-in schemas validate with requested defaults', async () => {
@@ -371,9 +453,66 @@ test('Google auth route is registered and User supports nullable unique Google i
   const user = new User({ username: 'google-user', password: 'hashed' });
   await user.validate();
   assert.equal(user.googleId, null);
+  assert.equal(user.isVerified, false);
+  assert.equal(user.isFaceVerified, false);
   assert.ok(User.schema.indexes().some(([index, options]) =>
     index.googleId === 1 && options.unique &&
     options.partialFilterExpression.googleId.$type === 'string'
   ));
   assert.ok(User.schema.path('email').options.unique);
+});
+
+test('face review grants or removes host verification only with the review result', async () => {
+  const route = faceVerificationRoutes.stack.find((layer) =>
+    layer.route && layer.route.path === '/:id/review' && layer.route.methods.put
+  );
+  assert.ok(route);
+
+  const originalFindOneAndUpdate = FaceVerification.findOneAndUpdate;
+  const originalUserFindOneAndUpdate = User.findOneAndUpdate;
+  const originalHostFindOneAndUpdate = Host.findOneAndUpdate;
+  const verificationId = '507f1f77bcf86cd799439011';
+  const calls = [];
+  FaceVerification.findOneAndUpdate = async () => ({ userId });
+  User.findOneAndUpdate = async (...args) => calls.push(['user', ...args]);
+  Host.findOneAndUpdate = async (...args) => calls.push(['host', ...args]);
+
+  try {
+    for (const status of ['VERIFIED', 'REJECTED']) {
+      calls.length = 0;
+      const res = {
+        statusCode: 200,
+        status(code) {
+          this.statusCode = code;
+          return this;
+        },
+        json(body) {
+          this.body = body;
+          return this;
+        }
+      };
+      await route.route.stack[1].handle({
+        params: { id: verificationId },
+        body: { status },
+        user: { id: userId, role: 'ADMIN' }
+      }, res);
+
+      const isVerified = status === 'VERIFIED';
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(calls[0], [
+        'user',
+        { _id: userId, role: 'HOST' },
+        { $set: { isVerified, isFaceVerified: isVerified } }
+      ]);
+      assert.deepEqual(calls[1], [
+        'host',
+        { userId },
+        { $set: { faceVerified: isVerified } }
+      ]);
+    }
+  } finally {
+    FaceVerification.findOneAndUpdate = originalFindOneAndUpdate;
+    User.findOneAndUpdate = originalUserFindOneAndUpdate;
+    Host.findOneAndUpdate = originalHostFindOneAndUpdate;
+  }
 });

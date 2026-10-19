@@ -90,6 +90,7 @@ router.post('/send', auth, async (req, res) => {
         {
           userId: receiverId,
           type: 'GIFT_RECEIVED',
+          amountCoins: totalCost,
           amountDiamonds: hostDiamonds,
           referenceId: giftId
         }

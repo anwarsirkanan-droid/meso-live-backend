@@ -10,6 +10,7 @@ const { Server } = require('socket.io');
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const walletRoutes = require('./routes/walletRoutes');
+const withdrawRoutes = require('./routes/withdrawRoutes');
 const roomRoutes = require('./routes/roomRoutes');
 const messageRoutes = require('./routes/messageRoutes');
 const giftRoutes = require('./routes/giftRoutes');
@@ -56,7 +57,9 @@ app.get('/health', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/users', userRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/withdraw', withdrawRoutes);
 app.use('/api/room', roomRoutes);
 app.use('/api/message', messageRoutes);
 app.use('/api/gift', giftRoutes);
