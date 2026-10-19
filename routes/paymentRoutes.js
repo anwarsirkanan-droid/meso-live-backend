@@ -3,24 +3,40 @@ const router = express.Router();
 const Payment = require('../models/Payment');
 const { verifyToken } = require('../middleware/authMiddleware');
 const paymentService = require('../services/paymentService');
+const { RECHARGE_PACKAGES } = require('../config/rechargePackages');
 
 const isValidAmount = (amount) =>
   typeof amount === 'number' && Number.isFinite(amount) && amount > 0 && amount <= 1000000;
 
+router.get('/packages', (req, res) => {
+  return res.json(RECHARGE_PACKAGES);
+});
+
 router.post('/initialize', verifyToken, async (req, res) => {
   try {
-    const { amount, currency = 'ETB', description, coinsToCredit, customer } = req.body || {};
-    if (!isValidAmount(amount)) {
+    const { packageId, amount, currency = 'ETB', description, coinsToCredit, customer } = req.body || {};
+    const selectedPackage = packageId === undefined
+      ? null
+      : RECHARGE_PACKAGES.find((entry) => entry.id === packageId);
+    if (packageId !== undefined && !selectedPackage) {
+      return res.status(400).json({ message: 'Select a valid coin package.' });
+    }
+    const paymentAmount = selectedPackage?.amountEtb ?? amount;
+    const paymentDescription = selectedPackage
+      ? `${selectedPackage.coins} coin recharge`
+      : description;
+    const paymentCoins = selectedPackage?.coins ?? coinsToCredit;
+    if (!isValidAmount(paymentAmount)) {
       return res.status(400).json({ message: 'amount must be a positive number no greater than 1,000,000' });
     }
     if (!process.env.CHAPA_SECRET_KEY &&
-        (!Number.isSafeInteger(coinsToCredit) || coinsToCredit <= 0)) {
+        (!Number.isSafeInteger(paymentCoins) || paymentCoins <= 0)) {
       return res.status(400).json({ message: 'coinsToCredit must be a positive whole number' });
     }
     if (typeof currency !== 'string' || currency.trim().toUpperCase() !== 'ETB') {
       return res.status(400).json({ message: 'Only ETB payments are currently supported' });
     }
-    if (typeof description !== 'string' || !description.trim() || description.trim().length > 255) {
+    if (typeof paymentDescription !== 'string' || !paymentDescription.trim() || paymentDescription.trim().length > 255) {
       return res.status(400).json({ message: 'description must be between 1 and 255 characters' });
     }
     if (process.env.CHAPA_SECRET_KEY) {
@@ -35,11 +51,12 @@ router.post('/initialize', verifyToken, async (req, res) => {
 
     const payment = await paymentService.initializePayment(
       req.user.id,
-      amount,
+      paymentAmount,
       currency.trim().toUpperCase(),
-      description.trim(),
+      paymentDescription.trim(),
       {
-        ...(coinsToCredit !== undefined ? { coinsToCredit } : {}),
+        ...(paymentCoins !== undefined ? { coinsToCredit: paymentCoins } : {}),
+        ...(selectedPackage ? { packageCoinsToCredit: selectedPackage.coins } : {}),
         email: customer?.email?.trim(),
         firstName: customer?.firstName?.trim(),
         lastName: customer?.lastName?.trim()

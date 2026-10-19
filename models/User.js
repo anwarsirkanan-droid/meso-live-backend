@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
+const { allocatePublicUserId } = require('../services/userIdService');
 
 const userSchema = new mongoose.Schema({
+  publicId: { type: Number, min: 1_000_000, max: 9_999_999 },
   username: { type: String, required: true, unique: true, trim: true },
   email: { type: String, required: true, trim: true, lowercase: true, unique: true },
   googleId: { type: String, default: null },
@@ -49,6 +51,14 @@ const userSchema = new mongoose.Schema({
   rewardCoins: { type: Number, default: 0 },
   agencyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Agency', default: null }
 }, { timestamps: true });
+
+userSchema.index({ publicId: 1 }, { unique: true, sparse: true });
+
+userSchema.pre('save', async function assignPublicId() {
+  if (this.publicId == null) {
+    this.publicId = await allocatePublicUserId();
+  }
+});
 
 userSchema.index(
   { googleId: 1 },

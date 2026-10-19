@@ -55,11 +55,12 @@ async function initializePayment(userId, amount, currency, description, options 
   const { email, firstName, lastName } = options;
   const configuredCoinsPerEtb = Number(process.env.CHAPA_COINS_PER_ETB);
   if (config.mode === 'chapa' &&
+      !Number.isSafeInteger(options.packageCoinsToCredit) &&
       (!Number.isSafeInteger(configuredCoinsPerEtb) || configuredCoinsPerEtb <= 0)) {
     throw new PaymentError('Configure CHAPA_COINS_PER_ETB before accepting real payments.', 503);
   }
   const coinsToCredit = config.mode === 'chapa'
-    ? Math.floor(amount * configuredCoinsPerEtb)
+    ? options.packageCoinsToCredit ?? Math.floor(amount * configuredCoinsPerEtb)
     : options.coinsToCredit;
   if (!mongoose.Types.ObjectId.isValid(userId) ||
       typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0 || amount > 1000000 ||

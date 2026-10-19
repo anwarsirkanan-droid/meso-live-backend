@@ -6,6 +6,8 @@ const Message = require('../models/Message');
 const Agency = require('../models/Agency');
 const AgencyApplication = require('../models/AgencyApplication');
 const User = require('../models/User');
+const UserIdCounter = require('../models/UserIdCounter');
+const { allocatePublicUserId } = require('../services/userIdService');
 const Host = require('../models/Host');
 const Follow = require('../models/Follow');
 const Notification = require('../models/Notification');
@@ -469,6 +471,10 @@ test('Google auth route is registered and User supports nullable unique Google i
     options.partialFilterExpression.googleId.$type === 'string'
   ));
   assert.ok(User.schema.path('email').options.unique);
+  assert.equal(User.schema.path('publicId').instance, 'Number');
+  assert.ok(User.schema.indexes().some(([index, options]) =>
+    index.publicId === 1 && options.unique && options.sparse
+  ));
   assert.equal(User.schema.path('email').isRequired, true);
   assert.notEqual(User.schema.path('password').options.required, true);
   const linkRoute = authRoutes.stack.find((layer) =>
@@ -476,6 +482,30 @@ test('Google auth route is registered and User supports nullable unique Google i
   );
   assert.ok(linkRoute, 'Expected POST /link-google account linking route');
   assert.equal(linkRoute.route.stack[0].handle, auth);
+});
+
+test('public user IDs are allocated sequentially as seven-digit numbers', async () => {
+  const originalFindByIdAndUpdate = UserIdCounter.findByIdAndUpdate;
+  const originalCreate = UserIdCounter.create;
+  let sequence = null;
+  UserIdCounter.findByIdAndUpdate = async (id, update) => {
+    assert.equal(id, 'public-user-id');
+    if (sequence === null) return null;
+    sequence += update.$inc.sequence;
+    return { sequence };
+  };
+  UserIdCounter.create = async (counter) => {
+    sequence = counter.sequence;
+    return counter;
+  };
+
+  try {
+    assert.equal(await allocatePublicUserId(), 1_000_000);
+    assert.equal(await allocatePublicUserId(), 1_000_001);
+  } finally {
+    UserIdCounter.findByIdAndUpdate = originalFindByIdAndUpdate;
+    UserIdCounter.create = originalCreate;
+  }
 });
 
 test('face review grants or removes host verification only with the review result', async () => {

@@ -69,17 +69,28 @@ module.exports = (io, socket) => {
     }
   };
 
-  const joinRoom = async (payload) => {
+  const joinRoom = async (payload, acknowledge) => {
+    const acknowledgeJoin = (result) => {
+      if (typeof acknowledge === 'function') acknowledge(result);
+    };
     try {
       const roomId = getRoomId(payload);
       if (!mongoose.Types.ObjectId.isValid(roomId)) {
+        acknowledgeJoin({ error: 'Invalid room ID' });
         return socket.emit('error', { message: 'Invalid room ID' });
       }
-      if (joinedRoomIds.has(roomId)) return;
+      if (joinedRoomIds.has(roomId)) {
+        acknowledgeJoin({ roomId });
+        return;
+      }
 
       const room = await Room.findById(roomId);
-      if (!room) return socket.emit('error', { message: 'Room not found' });
+      if (!room) {
+        acknowledgeJoin({ error: 'Room not found' });
+        return socket.emit('error', { message: 'Room not found' });
+      }
       if (room.bannedUsers?.some((bannedUserId) => bannedUserId.toString() === userId)) {
+        acknowledgeJoin({ error: 'You are banned from entering this room' });
         return socket.emit('error', { message: 'You are banned from entering this room' });
       }
 
@@ -96,6 +107,7 @@ module.exports = (io, socket) => {
       if (!updatedRoom) {
         joinedRoomIds.delete(roomId);
         await socket.leave(roomId);
+        acknowledgeJoin({ error: 'Room no longer exists' });
         return socket.emit('error', { message: 'Room no longer exists' });
       }
       io.to(roomId).emit('room_updated', updatedRoom);
@@ -111,7 +123,9 @@ module.exports = (io, socket) => {
         startHostTaskTracking(roomId);
         io.emit('room-status-changed', { roomId, isLive: true });
       }
+      acknowledgeJoin({ roomId });
     } catch (error) {
+      acknowledgeJoin({ error: 'Could not join this room.' });
       socket.emit('error', { message: error.message });
     }
   };

@@ -69,6 +69,7 @@ async function verifyGoogleCredential(credential) {
 function publicUser(user, googleProfile = {}) {
   return {
     id: user._id,
+    publicId: user.publicId,
     username: user.username,
     name: user.name || googleProfile.name || '',
     email: user.email || googleProfile.email || '',
@@ -88,6 +89,7 @@ router.get('/me', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-password');
     if (!user) return res.status(404).json({ error: 'User not found.' });
+    if (user.publicId == null) await user.save({ validateModifiedOnly: true });
 
     const profile = typeof user.toObject === 'function' ? user.toObject() : { ...user };
     delete profile.password;
