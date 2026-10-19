@@ -1,12 +1,70 @@
 const mongoose = require('mongoose');
 const Room = require('../models/Room');
 const User = require('../models/User');
+const { recordHostTime } = require('../services/hostDailyTaskService');
 
 module.exports = (io, socket) => {
   const joinedRoomIds = new Map();
+  const hostTaskSessions = new Map();
   const userId = socket.data.userId;
+  const relaySignal = (event, payload = {}) => {
+    const roomId = getRoomId(payload);
+    const targetSocketId = [payload.target, payload.to, payload.peerId]
+      .find((value) => typeof value === 'string' && value && value !== socket.id);
+    const targetSocket = targetSocketId && io.sockets?.sockets?.get(targetSocketId);
+    if (
+      typeof roomId !== 'string' ||
+      !joinedRoomIds.has(roomId) ||
+      !targetSocket?.rooms?.has(roomId)
+    ) {
+      return socket.emit('error', { message: 'Invalid room signaling target' });
+    }
+
+    io.to(targetSocketId).emit(event, {
+      ...payload,
+      roomId,
+      from: socket.id,
+      socketId: socket.id,
+      userId,
+    });
+  };
 
   const getRoomId = (payload) => typeof payload === 'string' ? payload : payload?.roomId;
+
+  const startHostTaskTracking = (roomId) => {
+    if (hostTaskSessions.has(roomId)) return;
+    const session = { lastRecordedAt: Date.now(), pending: Promise.resolve(), interval: null };
+    const record = () => {
+      session.pending = session.pending.catch(() => {}).then(async () => {
+        const now = Date.now();
+        if (now <= session.lastRecordedAt) return;
+        const room = await Room.findById(roomId);
+        const crownMicActive = room?.seats?.some((seat) =>
+          seat.isCrownMic && seat.userId?.toString() === userId
+        ) || false;
+        await recordHostTime(userId, new Date(session.lastRecordedAt), new Date(now), crownMicActive);
+        session.lastRecordedAt = now;
+      });
+      return session.pending;
+    };
+    session.record = record;
+    session.interval = setInterval(() => {
+      record().catch((error) => console.error(`Failed to record host task time in room ${roomId}:`, error));
+    }, 15_000);
+    session.interval.unref?.();
+    hostTaskSessions.set(roomId, session);
+  };
+
+  const stopHostTaskTracking = async (roomId) => {
+    const session = hostTaskSessions.get(roomId);
+    if (!session) return;
+    clearInterval(session.interval);
+    try {
+      await session.record();
+    } finally {
+      hostTaskSessions.delete(roomId);
+    }
+  };
 
   const joinRoom = async (payload) => {
     try {
@@ -42,7 +100,12 @@ module.exports = (io, socket) => {
         userId,
         currentListenersCount: updatedRoom.currentListenersCount
       });
+      socket.to(roomId).emit('user-joined', {
+        socketId: socket.id,
+        userId,
+      });
       if (isHost) {
+        startHostTaskTracking(roomId);
         io.emit('room-status-changed', { roomId, isLive: true });
       }
     } catch (error) {
@@ -52,11 +115,21 @@ module.exports = (io, socket) => {
 
   socket.on('join_room', joinRoom);
   socket.on('join-room', joinRoom);
+  socket.on('offer', (payload) => relaySignal('offer', payload));
+  socket.on('answer', (payload) => relaySignal('answer', payload));
+  socket.on('ice-candidate', (payload) => relaySignal('ice-candidate', payload));
 
   const leaveRoom = async (roomId) => {
     if (!joinedRoomIds.has(roomId)) return;
     const isHost = joinedRoomIds.get(roomId);
     joinedRoomIds.delete(roomId);
+    if (isHost) {
+      try {
+        await stopHostTaskTracking(roomId);
+      } catch (error) {
+        console.error(`Failed to finalize host task time in room ${roomId}:`, error);
+      }
+    }
     await socket.leave(roomId);
     const update = {
       $inc: { currentListenersCount: -1 },
@@ -86,6 +159,7 @@ module.exports = (io, socket) => {
       userId,
       currentListenersCount: room.currentListenersCount
     });
+    io.to(roomId).emit('user-left', { socketId: socket.id, userId });
     if (isHost) {
       io.emit('room-status-changed', { roomId, isLive: false });
     }

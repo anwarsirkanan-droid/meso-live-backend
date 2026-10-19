@@ -115,6 +115,8 @@ test('GET /api/auth/me returns a valid public profile and reports lookup failure
   assert.equal(body.user.profileComplete, false);
   assert.equal(body.user.id, user._id);
   assert.equal(Object.hasOwn(body.user, 'password'), false);
+  assert.equal(body.user.wealthLevel.level, 1);
+  assert.equal(body.user.charmLevel.level, 1);
 
   lookupMode = 'missing';
   const missingResponse = await fetch(url, { headers });
@@ -515,6 +517,73 @@ test('PUT /api/users/profile validates, checks uniqueness, and completes a profi
   assert.equal(successBody.user.isFaceVerified, false);
   assert.equal(successBody.user.profileComplete, true);
   assert.equal('password' in successBody.user, false);
+});
+
+test('PUT /api/users/avatar requires authentication and persists a validated image', async (context) => {
+  const originalFindById = User.findById;
+  const user = {
+    _id: '507f1f77bcf86cd799439011',
+    username: 'avatar-user',
+    avatar: '',
+    profilePicture: '',
+    password: 'must-not-be-returned',
+    save: async () => {},
+    toJSON() {
+      return { ...this };
+    },
+  };
+  let lookupCount = 0;
+  User.findById = async (id) => {
+    lookupCount += 1;
+    assert.equal(id, user._id);
+    return user;
+  };
+
+  const server = app.listen(0);
+  context.after(async () => {
+    User.findById = originalFindById;
+    await new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  });
+  await new Promise((resolve) => server.once('listening', resolve));
+
+  const url = `http://127.0.0.1:${server.address().port}/api/users/avatar`;
+  const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+
+  const unauthenticated = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ avatar: 'data:image/jpeg;base64,/9j/AA==' }),
+  });
+  assert.equal(unauthenticated.status, 401);
+  assert.equal(lookupCount, 0);
+
+  const invalid = await fetch(url, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ avatar: 'data:image/svg+xml;base64,PHN2Zz4=' }),
+  });
+  assert.equal(invalid.status, 400);
+  assert.equal(lookupCount, 0);
+
+  const avatar = 'data:image/jpeg;base64,/9j/AA==';
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ avatar }),
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(user.avatar, avatar);
+  assert.equal(user.profilePicture, avatar);
+  assert.equal(body.user.avatar, avatar);
+  assert.equal('password' in body.user, false);
 });
 
 test('PUT /api/users/profile rejects a username already owned by another account', async (context) => {

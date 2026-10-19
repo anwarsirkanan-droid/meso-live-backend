@@ -85,6 +85,47 @@ router.put('/profile', auth, async (req, res) => {
   }
 });
 
+router.put('/avatar', auth, async (req, res) => {
+  const avatar = req.body?.avatar;
+  const match = typeof avatar === 'string'
+    ? avatar.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/)
+    : null;
+  if (!match) {
+    return res.status(400).json({ message: 'Avatar must be a JPEG, PNG, or WebP image.' });
+  }
+
+  const image = Buffer.from(match[2], 'base64');
+  if (image.length > 600 * 1024 || image.toString('base64') !== match[2]) {
+    return res.status(400).json({ message: 'Avatar image must be smaller than 600 KB.' });
+  }
+
+  const isJpeg = match[1] === 'jpeg' && image[0] === 0xff && image[1] === 0xd8 && image[2] === 0xff;
+  const isPng = match[1] === 'png' &&
+    image.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const isWebp = match[1] === 'webp' &&
+    image.toString('ascii', 0, 4) === 'RIFF' &&
+    image.toString('ascii', 8, 12) === 'WEBP';
+  if (!isJpeg && !isPng && !isWebp) {
+    return res.status(400).json({ message: 'Avatar image data is invalid.' });
+  }
+
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    user.avatar = avatar;
+    user.profilePicture = avatar;
+    await user.save({ validateModifiedOnly: true });
+
+    const profile = user.toJSON();
+    delete profile.password;
+    return res.json({ message: 'Profile picture updated successfully.', user: profile });
+  } catch (err) {
+    console.error('Could not update the profile picture:', err);
+    return res.status(500).json({ message: 'Could not update the profile picture.' });
+  }
+});
+
 router.put('/update', auth, async (req, res) => {
   try {
     const { avatar, cover, bio } = req.body;

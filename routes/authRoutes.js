@@ -8,6 +8,7 @@ const router = express.Router();
 const User = require('../models/User');
 const auth = require('../middleware/auth');
 const { JWT_SECRET } = require('../middleware/authMiddleware');
+const { calculateCharmLevel, calculateWealthLevel } = require('../config/levels');
 const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
 const googleClient = new OAuth2Client(
@@ -92,6 +93,8 @@ router.get('/me', auth, async (req, res) => {
     delete profile.password;
     profile.id = profile.id || profile._id;
     profile.profileComplete = profile.profileComplete === true;
+    profile.wealthLevel = calculateWealthLevel(profile.totalRechargedCoins);
+    profile.charmLevel = calculateCharmLevel(profile.charmPoints);
     return res.json({ user: profile });
   } catch (error) {
     console.error('Could not load the authenticated user profile:', error);

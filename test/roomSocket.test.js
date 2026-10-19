@@ -7,21 +7,122 @@ const roomSocket = require('../sockets/roomSocket');
 const roomId = '507f1f77bcf86cd799439012';
 const hostId = '507f1f77bcf86cd799439011';
 
-function createSocket(userId) {
+function createSocket(userId, socketId = `socket-${userId}`) {
   const handlers = new Map();
   const emitted = [];
   const roomMembership = [];
+  const rooms = new Set();
+  const broadcasts = [];
   return {
+    id: socketId,
     data: { userId },
     handlers,
     emitted,
     roomMembership,
+    rooms,
+    broadcasts,
     on: (event, handler) => handlers.set(event, handler),
     emit: (event, payload) => emitted.push({ event, payload }),
-    join: async (id) => roomMembership.push({ action: 'join', id }),
-    leave: async (id) => roomMembership.push({ action: 'leave', id }),
+    to: (id) => ({
+      emit: (event, payload) => broadcasts.push({ id, event, payload }),
+    }),
+    join: async (id) => {
+      roomMembership.push({ action: 'join', id });
+      rooms.add(id);
+    },
+    leave: async (id) => {
+      roomMembership.push({ action: 'leave', id });
+      rooms.delete(id);
+    },
   };
 }
+
+test('room participants exchange authenticated, room-scoped WebRTC signaling events', async (context) => {
+  const originalFindById = Room.findById;
+  const originalFindByIdAndUpdate = Room.findByIdAndUpdate;
+  let room = {
+    _id: roomId,
+    ownerId: hostId,
+    bannedUsers: [],
+    currentListenersCount: 0,
+    isLive: false,
+  };
+  Room.findById = async () => room;
+  Room.findByIdAndUpdate = (_id, update) => ({
+    populate: async () => {
+      room.currentListenersCount += update.$inc.currentListenersCount;
+      return room;
+    },
+  });
+  context.after(() => {
+    Room.findById = originalFindById;
+    Room.findByIdAndUpdate = originalFindByIdAndUpdate;
+  });
+
+  const relays = [];
+  const io = {
+    sockets: { sockets: new Map() },
+    to: (id) => ({
+      emit: (event, payload) => relays.push({ id, event, payload }),
+    }),
+    emit: () => {},
+  };
+  const first = createSocket('507f1f77bcf86cd799439013', 'socket-first');
+  const second = createSocket('507f1f77bcf86cd799439014', 'socket-second');
+  const outside = createSocket('507f1f77bcf86cd799439015', 'socket-outside');
+  io.sockets.sockets.set(first.id, first);
+  io.sockets.sockets.set(second.id, second);
+  io.sockets.sockets.set(outside.id, outside);
+  roomSocket(io, first);
+  roomSocket(io, second);
+  await first.handlers.get('join-room')(roomId);
+  await second.handlers.get('join-room')(roomId);
+
+  assert.ok(second.broadcasts.some(({ event, payload }) =>
+    event === 'user-joined' && payload.socketId === second.id
+  ));
+
+  const description = { type: 'offer', sdp: 'test-sdp' };
+  first.handlers.get('offer')({
+    roomId,
+    target: second.id,
+    from: 'spoofed-sender',
+    offer: description,
+  });
+  assert.deepEqual(relays.at(-1), {
+    id: second.id,
+    event: 'offer',
+    payload: {
+      roomId,
+      target: second.id,
+      from: first.id,
+      socketId: first.id,
+      userId: first.data.userId,
+      offer: description,
+    },
+  });
+
+  second.handlers.get('answer')({
+    roomId,
+    to: first.id,
+    answer: { type: 'answer', sdp: 'answer-sdp' },
+  });
+  assert.equal(relays.at(-1).event, 'answer');
+  assert.equal(relays.at(-1).id, first.id);
+
+  first.handlers.get('ice-candidate')({
+    roomId,
+    peerId: second.id,
+    candidate: { candidate: 'candidate' },
+  });
+  assert.equal(relays.at(-1).event, 'ice-candidate');
+  assert.equal(relays.at(-1).id, second.id);
+
+  const relayCount = relays.length;
+  first.handlers.get('offer')({ roomId, target: outside.id, offer: description });
+  assert.equal(relays.length, relayCount);
+  assert.ok(first.emitted.some(({ event }) => event === 'error'));
+});
 
 test('host leave and disconnect mark the room offline and broadcast room status', async (context) => {
   const originalFindById = Room.findById;
