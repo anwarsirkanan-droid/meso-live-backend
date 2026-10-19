@@ -1,8 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { OAuth2Client } = require('google-auth-library');
 
 process.env.JWT_SECRET ||= 'test-jwt-secret-that-is-long-enough-for-production';
+process.env.GOOGLE_CLIENT_ID ||= 'test-google-client-id.apps.googleusercontent.com';
 
 const User = require('../models/User');
 const { app } = require('../server');
@@ -76,4 +79,57 @@ test('CORS allows the deployed frontend origin', async (context) => {
   });
 
   assert.equal(response.headers.get('access-control-allow-origin'), 'https://meso-live-frontend.onrender.com');
+});
+
+test('POST /api/auth/google verifies an ID token and issues a backend JWT', async (context) => {
+  const originalVerifyIdToken = OAuth2Client.prototype.verifyIdToken;
+  const originalFindOne = User.findOne;
+  const user = {
+    _id: '507f1f77bcf86cd799439011',
+    username: 'google-user',
+    email: 'google@example.com',
+    googleId: 'google-subject',
+    password: 'unused',
+    role: 'USER',
+    avatar: '',
+    isVerified: false,
+    save: async () => {},
+  };
+  let audience;
+  OAuth2Client.prototype.verifyIdToken = async ({ audience: actualAudience }) => {
+    audience = actualAudience;
+    return {
+      getPayload: () => ({
+        sub: 'google-subject',
+        email: 'Google@Example.com',
+        email_verified: true,
+        name: 'Google User',
+      }),
+    };
+  };
+  User.findOne = async () => user;
+
+  const server = app.listen(0);
+  context.after(async () => {
+    OAuth2Client.prototype.verifyIdToken = originalVerifyIdToken;
+    User.findOne = originalFindOne;
+    await new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  });
+  await new Promise((resolve) => server.once('listening', resolve));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/google`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ credential: 'mock-google-id-token' }),
+  });
+  const body = await response.json();
+  const decodedToken = jwt.verify(body.token, process.env.JWT_SECRET);
+
+  assert.equal(response.status, 200);
+  assert.equal(audience, process.env.GOOGLE_CLIENT_ID);
+  assert.equal(decodedToken.id, user._id);
+  assert.equal(decodedToken.username, user.username);
+  assert.equal(body.user.email, user.email);
 });

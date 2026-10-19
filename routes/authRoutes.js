@@ -7,9 +7,11 @@ const router = express.Router();
 
 const User = require('../models/User');
 const { JWT_SECRET } = require('../middleware/authMiddleware');
+const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
+const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
 const googleClient = new OAuth2Client(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET
+  googleClientId || undefined,
+  googleClientSecret || undefined
 );
 
 function createToken(user) {
@@ -141,13 +143,13 @@ router.post('/google', async (req, res) => {
     if (typeof credential !== 'string' || !credential.trim()) {
       return res.status(400).json({ error: 'Google credential is required.' });
     }
-    if (!process.env.GOOGLE_CLIENT_ID) {
+    if (!googleClientId) {
       return res.status(503).json({ error: 'Google sign-in is not configured on the server.' });
     }
 
     const ticket = await googleClient.verifyIdToken({
       idToken: credential,
-      audience: process.env.GOOGLE_CLIENT_ID
+      audience: googleClientId
     });
     const payload = ticket.getPayload();
     if (!payload || !payload.sub || !payload.email || payload.email_verified !== true) {
