@@ -8,6 +8,18 @@ const Transaction = require('../models/Transaction');
 const auth = require('../middleware/auth');
 const { calculateLuckyGiftMultiplier, processGiftDistribution } = require('../services/giftService');
 
+router.get('/catalog', auth, async (req, res) => {
+  try {
+    const gifts = await Gift.find()
+      .select('_id name icon coinPrice category')
+      .sort({ coinPrice: 1 });
+    return res.json(gifts);
+  } catch (err) {
+    console.error('Could not load gift catalog:', err);
+    return res.status(500).json({ error: 'Could not load gifts.' });
+  }
+});
+
 router.post('/send', auth, async (req, res) => {
   const { receiverId, giftId, roomId, count = 1 } = req.body || {};
   if (typeof receiverId !== 'string' || typeof giftId !== 'string' ||

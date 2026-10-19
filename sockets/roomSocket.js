@@ -39,9 +39,12 @@ module.exports = (io, socket) => {
         const now = Date.now();
         if (now <= session.lastRecordedAt) return;
         const room = await Room.findById(roomId);
+        const crownSeats = room?.seats?.filter((seat) => seat.isCrownMic) || [];
         const crownMicActive = room?.seats?.some((seat) =>
           seat.isCrownMic && seat.userId?.toString() === userId
-        ) || false;
+        ) || (!crownSeats.length && room?.seats?.some((seat) =>
+          seat.seatIndex === 0 && seat.userId?.toString() === userId
+        )) || false;
         await recordHostTime(userId, new Date(session.lastRecordedAt), new Date(now), crownMicActive);
         session.lastRecordedAt = now;
       });

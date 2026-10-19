@@ -172,6 +172,7 @@ test('gift and game calculations preserve integer currency amounts', () => {
 test('wallet recharge, gift, and game routes require authentication', () => {
   for (const [router, path] of [
     [walletRoutes, '/recharge'],
+    [giftRoutes, '/catalog'],
     [giftRoutes, '/send'],
     [gameRoutes, '/play']
   ]) {

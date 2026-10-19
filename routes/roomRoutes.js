@@ -139,7 +139,10 @@ router.post('/create', auth, async (req, res) => {
       return res.status(400).json({ message: 'Invalid room category' });
     }
 
-    const seats = Array.from({ length: 25 }, (_, seatIndex) => ({ seatIndex }));
+    const seats = Array.from({ length: 25 }, (_, seatIndex) => ({
+      seatIndex,
+      ...(seatIndex === 0 ? { isCrownMic: true } : {}),
+    }));
     const room = await Room.create({
       title: title.trim(),
       ownerId: req.user.id,
@@ -194,7 +197,7 @@ router.post('/:roomId/seat/:seatIndex/take', auth, async (req, res) => {
       },
       { $set: { 'seats.$.userId': req.user.id } },
       { new: true }
-    );
+    ).populate(roomPopulation);
     if (!updatedRoom) {
       const seat = room.seats.find((entry) => entry.seatIndex === seatIndex);
       const message = !seat ? 'Invalid seat number' :
@@ -202,6 +205,8 @@ router.post('/:roomId/seat/:seatIndex/take', auth, async (req, res) => {
           seat.userId ? 'Seat is already occupied' : 'You already occupy a seat in this room';
       return res.status(400).json({ message });
     }
+    const io = req.app.get('io');
+    if (io) io.to(roomId).emit('room_updated', updatedRoom);
     res.json({ message: `Successfully joined seat ${seatIndex}`, room: updatedRoom });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -219,8 +224,10 @@ router.post('/:roomId/seat/:seatIndex/leave', auth, async (req, res) => {
       { _id: roomId, seats: { $elemMatch: { seatIndex, userId: req.user.id } } },
       { $set: { 'seats.$.userId': null } },
       { new: true }
-    );
+    ).populate(roomPopulation);
     if (!room) return res.status(400).json({ message: 'You are not on this seat' });
+    const io = req.app.get('io');
+    if (io) io.to(roomId).emit('room_updated', room);
     res.json({ message: `Left seat ${seatIndex} successfully`, room });
   } catch (err) {
     res.status(500).json({ message: err.message });
