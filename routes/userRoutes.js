@@ -69,7 +69,7 @@ router.put('/profile', auth, async (req, res) => {
     user.profilePicture = profilePicture ?? user.profilePicture ?? user.avatar ?? '';
     user.avatar = user.profilePicture;
     user.profileComplete = true;
-    await user.save();
+    await user.save({ validateModifiedOnly: true });
 
     const profile = user.toJSON();
     delete profile.password;

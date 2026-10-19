@@ -3,11 +3,14 @@ const Room = require('../models/Room');
 const User = require('../models/User');
 
 module.exports = (io, socket) => {
-  const joinedRoomIds = new Set();
+  const joinedRoomIds = new Map();
   const userId = socket.data.userId;
 
-  socket.on('join_room', async ({ roomId } = {}) => {
+  const getRoomId = (payload) => typeof payload === 'string' ? payload : payload?.roomId;
+
+  const joinRoom = async (payload) => {
     try {
+      const roomId = getRoomId(payload);
       if (!mongoose.Types.ObjectId.isValid(roomId)) {
         return socket.emit('error', { message: 'Invalid room ID' });
       }
@@ -15,15 +18,18 @@ module.exports = (io, socket) => {
 
       const room = await Room.findById(roomId);
       if (!room) return socket.emit('error', { message: 'Room not found' });
-      if (room.bannedUsers.some((bannedUserId) => bannedUserId.toString() === userId)) {
+      if (room.bannedUsers?.some((bannedUserId) => bannedUserId.toString() === userId)) {
         return socket.emit('error', { message: 'You are banned from entering this room' });
       }
 
+      const isHost = room.ownerId.toString() === userId;
       await socket.join(roomId);
-      joinedRoomIds.add(roomId);
+      joinedRoomIds.set(roomId, isHost);
+      const update = { $inc: { currentListenersCount: 1 } };
+      if (isHost) update.$set = { isLive: true };
       const updatedRoom = await Room.findByIdAndUpdate(
         roomId,
-        { $inc: { currentListenersCount: 1 } },
+        update,
         { new: true }
       ).populate('seats.userId', 'username avatar');
       if (!updatedRoom) {
@@ -36,30 +42,41 @@ module.exports = (io, socket) => {
         userId,
         currentListenersCount: updatedRoom.currentListenersCount
       });
-    } catch (err) {
-      socket.emit('error', { message: err.message });
+      if (isHost) {
+        io.emit('room-status-changed', { roomId, isLive: true });
+      }
+    } catch (error) {
+      socket.emit('error', { message: error.message });
     }
-  });
+  };
+
+  socket.on('join_room', joinRoom);
+  socket.on('join-room', joinRoom);
 
   const leaveRoom = async (roomId) => {
     if (!joinedRoomIds.has(roomId)) return;
+    const isHost = joinedRoomIds.get(roomId);
     joinedRoomIds.delete(roomId);
     await socket.leave(roomId);
+    const update = {
+      $inc: { currentListenersCount: -1 },
+      $set: { 'seats.$[seat].userId': null }
+    };
+    if (isHost) update.$set.isLive = false;
     let room = await Room.findOneAndUpdate(
       { _id: roomId, currentListenersCount: { $gt: 0 } },
-      {
-        $inc: { currentListenersCount: -1 },
-        $set: { 'seats.$[seat].userId': null }
-      },
+      update,
       {
         new: true,
         arrayFilters: [{ 'seat.userId': userId }]
       }
     );
     if (!room) {
+      const fallbackUpdate = { $set: { 'seats.$[seat].userId': null } };
+      if (isHost) fallbackUpdate.$set.isLive = false;
       room = await Room.findByIdAndUpdate(
         roomId,
-        { $set: { 'seats.$[seat].userId': null } },
+        fallbackUpdate,
         { new: true, arrayFilters: [{ 'seat.userId': userId }] }
       );
     }
@@ -69,16 +86,23 @@ module.exports = (io, socket) => {
       userId,
       currentListenersCount: room.currentListenersCount
     });
+    if (isHost) {
+      io.emit('room-status-changed', { roomId, isLive: false });
+    }
   };
 
-  socket.on('leave_room', async ({ roomId } = {}) => {
+  const handleLeaveRoom = async (payload) => {
     try {
+      const roomId = getRoomId(payload);
       if (typeof roomId !== 'string') return;
       await leaveRoom(roomId);
-    } catch (err) {
-      socket.emit('error', { message: err.message });
+    } catch (error) {
+      socket.emit('error', { message: error.message });
     }
-  });
+  };
+
+  socket.on('leave_room', handleLeaveRoom);
+  socket.on('leave-room', handleLeaveRoom);
 
   socket.on('update_seat', async ({ roomId, seatIndex, isLocked, isMuted } = {}) => {
     try {
@@ -108,11 +132,11 @@ module.exports = (io, socket) => {
   });
 
   socket.on('disconnect', async () => {
-    for (const roomId of joinedRoomIds) {
+    for (const roomId of joinedRoomIds.keys()) {
       try {
         await leaveRoom(roomId);
-      } catch (err) {
-        console.error(`Failed to clean up socket room ${roomId}:`, err);
+      } catch (error) {
+        console.error(`Failed to clean up socket room ${roomId}:`, error);
       }
     }
   });

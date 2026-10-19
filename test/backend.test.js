@@ -75,7 +75,7 @@ test('agency owner/member fields and uppercase user roles validate', async () =>
   const agency = new Agency({ ownerId: userId, members: [userId], name: 'Test agency' });
   await agency.validate();
 
-  const agent = new User({ username: 'test-agent', password: 'hashed', role: 'AGENT' });
+  const agent = new User({ username: 'test-agent', email: 'agent@example.com', password: 'hashed', role: 'AGENT' });
   await agent.validate();
   assert.equal(agent.profileComplete, false);
   assert.equal(agent.profilePicture, '');
@@ -89,6 +89,7 @@ test('agency owner/member fields and uppercase user roles validate', async () =>
 
   const incompleteProfile = new User({
     username: 'incomplete-profile',
+    email: 'incomplete@example.com',
     password: 'hashed',
     profileComplete: true
   });
@@ -128,6 +129,7 @@ test('agency owner/member fields and uppercase user roles validate', async () =>
 
   const completeProfile = new User({
     username: 'complete-profile',
+    email: 'complete@example.com',
     password: 'hashed',
     phoneNumber: '+12025550123',
     country: 'United States',
@@ -137,7 +139,12 @@ test('agency owner/member fields and uppercase user roles validate', async () =>
   await completeProfile.validate();
   assert.equal(User.schema.path('username').options.unique, true);
 
-  const invalidRole = new User({ username: 'bad-role', password: 'hashed', role: 'agency' });
+  const invalidRole = new User({
+    username: 'bad-role',
+    email: 'bad-role@example.com',
+    password: 'hashed',
+    role: 'agency'
+  });
   await assert.rejects(invalidRole.validate(), /`agency` is not a valid enum value/);
 });
 
@@ -406,7 +413,7 @@ test('face verification and invitation models validate status, defaults, and uni
     index.inviteCode === 1 && options.unique
   ));
 
-  const inviter = new User({ username: 'reward-user', password: 'hashed' });
+  const inviter = new User({ username: 'reward-user', email: 'reward@example.com', password: 'hashed' });
   await inviter.validate();
   assert.equal(inviter.rewardCoins, 0);
 });
@@ -450,9 +457,10 @@ test('Google auth route is registered and User supports nullable unique Google i
   );
   assert.ok(route, 'Expected POST /google authentication route');
 
-  const user = new User({ username: 'google-user', password: 'hashed' });
+  const user = new User({ username: 'google-user', email: 'google@example.com' });
   await user.validate();
   assert.equal(user.googleId, null);
+  assert.equal(user.password, undefined);
   assert.equal(user.isVerified, false);
   assert.equal(user.isFaceVerified, false);
   assert.ok(User.schema.indexes().some(([index, options]) =>
@@ -460,6 +468,13 @@ test('Google auth route is registered and User supports nullable unique Google i
     options.partialFilterExpression.googleId.$type === 'string'
   ));
   assert.ok(User.schema.path('email').options.unique);
+  assert.equal(User.schema.path('email').isRequired, true);
+  assert.notEqual(User.schema.path('password').options.required, true);
+  const linkRoute = authRoutes.stack.find((layer) =>
+    layer.route && layer.route.path === '/link-google' && layer.route.methods.post
+  );
+  assert.ok(linkRoute, 'Expected POST /link-google account linking route');
+  assert.equal(linkRoute.route.stack[0].handle, auth);
 });
 
 test('face review grants or removes host verification only with the review result', async () => {

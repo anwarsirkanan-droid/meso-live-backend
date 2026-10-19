@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const router = express.Router();
 const FaceVerification = require('../models/FaceVerification');
 const User = require('../models/User');
+const Host = require('../models/Host');
 const { verifyToken } = require('../middleware/authMiddleware');
 
 // TODO: Real face-match AI (AWS Rekognition/Face++) can be added later via adapter pattern
@@ -83,9 +84,14 @@ router.put('/:id/review', verifyToken, async (req, res) => {
     if (!verification) {
       return res.status(404).json({ message: 'Pending face verification not found' });
     }
-    await User.findByIdAndUpdate(
-      verification.userId,
-      { $set: { isVerified: status === 'VERIFIED' } }
+    const isVerified = status === 'VERIFIED';
+    await User.findOneAndUpdate(
+      { _id: verification.userId, role: 'HOST' },
+      { $set: { isVerified, isFaceVerified: isVerified } }
+    );
+    await Host.findOneAndUpdate(
+      { userId: verification.userId },
+      { $set: { faceVerified: isVerified } }
     );
     return res.json({ message: 'Face verification reviewed', verification });
   } catch (err) {

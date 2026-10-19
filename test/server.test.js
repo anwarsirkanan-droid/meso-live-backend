@@ -66,6 +66,68 @@ test('POST /api/auth/login is mounted, accepts email, and returns a token', asyn
   assert.equal(body.user.profileComplete, false);
 });
 
+test('GET /api/auth/me returns a valid public profile and reports lookup failures', async (context) => {
+  const originalFindById = User.findById;
+  const user = {
+    _id: '507f1f77bcf86cd799439011',
+    username: 'new-user',
+    email: 'new-user@example.com',
+    password: 'must-not-be-returned',
+    profileComplete: false,
+    phoneNumber: '',
+    country: '',
+    gender: '',
+    role: 'USER',
+    toObject() {
+      return { ...this };
+    },
+  };
+  let lookupMode = 'found';
+  User.findById = (id) => ({
+    select: async (fields) => {
+      assert.equal(id, user._id);
+      assert.equal(fields, '-password');
+      if (lookupMode === 'failed') throw new Error('database details must not reach the client');
+      return lookupMode === 'missing' ? null : user;
+    },
+  });
+
+  const server = app.listen(0);
+  context.after(async () => {
+    User.findById = originalFindById;
+    await new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  });
+  await new Promise((resolve) => server.once('listening', resolve));
+
+  const url = `http://127.0.0.1:${server.address().port}/api/auth/me`;
+  const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
+  const headers = { Authorization: 'Bearer ' + token };
+
+  const unauthenticated = await fetch(url);
+  assert.equal(unauthenticated.status, 401);
+
+  const response = await fetch(url, { headers });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.user.username, user.username);
+  assert.equal(body.user.profileComplete, false);
+  assert.equal(body.user.id, user._id);
+  assert.equal(Object.hasOwn(body.user, 'password'), false);
+
+  lookupMode = 'missing';
+  const missingResponse = await fetch(url, { headers });
+  assert.equal(missingResponse.status, 404);
+
+  lookupMode = 'failed';
+  const failedResponse = await fetch(url, { headers });
+  assert.equal(failedResponse.status, 500);
+  assert.deepEqual(await failedResponse.json(), {
+    error: 'Could not load your profile. Please try again.',
+  });
+});
+
 test('CORS allows the deployed frontend origin', async (context) => {
   const server = app.listen(0);
   context.after(() => new Promise((resolve, reject) => {
@@ -243,6 +305,113 @@ test('POST /api/auth/google verifies an ID token and issues a backend JWT', asyn
   assert.equal(user.isFaceVerified, false);
 });
 
+test('POST /api/auth/google creates a passwordless user for a new verified Google identity', async (context) => {
+  const originalVerifyIdToken = OAuth2Client.prototype.verifyIdToken;
+  const originalFindOne = User.findOne;
+  const originalCreate = User.create;
+  let createdUser;
+  OAuth2Client.prototype.verifyIdToken = async () => ({
+    getPayload: () => ({
+      sub: 'new-google-subject',
+      email: 'New.User@example.com',
+      email_verified: true,
+      name: 'New User',
+      picture: 'https://example.com/google-picture.png',
+    }),
+  });
+  User.findOne = async () => null;
+  User.create = async (data) => {
+    createdUser = { _id: '507f1f77bcf86cd799439014', ...data };
+    return createdUser;
+  };
+
+  const server = app.listen(0);
+  context.after(async () => {
+    OAuth2Client.prototype.verifyIdToken = originalVerifyIdToken;
+    User.findOne = originalFindOne;
+    User.create = originalCreate;
+    await new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  });
+  await new Promise((resolve) => server.once('listening', resolve));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/google`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ credential: 'mock-new-google-id-token' }),
+  });
+  const body = await response.json();
+  const decodedToken = jwt.verify(body.token, process.env.JWT_SECRET);
+
+  assert.equal(response.status, 200);
+  assert.equal(decodedToken.id, createdUser._id);
+  assert.equal(createdUser.googleId, 'new-google-subject');
+  assert.equal(createdUser.email, 'new.user@example.com');
+  assert.equal(createdUser.name, 'New User');
+  assert.equal(createdUser.profilePicture, 'https://example.com/google-picture.png');
+  assert.equal(createdUser.role, 'USER');
+  assert.equal(createdUser.profileComplete, false);
+  assert.equal(createdUser.password, undefined);
+  assert.equal(body.user.profilePicture, 'https://example.com/google-picture.png');
+});
+
+test('POST /api/auth/link-google links a verified Google identity to the current account', async (context) => {
+  const originalVerifyIdToken = OAuth2Client.prototype.verifyIdToken;
+  const originalFindById = User.findById;
+  const originalFindOne = User.findOne;
+  const user = {
+    _id: '507f1f77bcf86cd799439011',
+    username: 'existing-host',
+    email: 'host@example.com',
+    googleId: null,
+    role: 'HOST',
+    profileComplete: true,
+    save: async () => {},
+  };
+  OAuth2Client.prototype.verifyIdToken = async () => ({
+    getPayload: () => ({
+      sub: 'host-google-subject',
+      email: 'host@example.com',
+      email_verified: true,
+      name: 'Existing Host',
+      picture: 'https://example.com/host-picture.png',
+    }),
+  });
+  User.findById = async () => user;
+  User.findOne = async () => null;
+
+  const server = app.listen(0);
+  context.after(async () => {
+    OAuth2Client.prototype.verifyIdToken = originalVerifyIdToken;
+    User.findById = originalFindById;
+    User.findOne = originalFindOne;
+    await new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  });
+  await new Promise((resolve) => server.once('listening', resolve));
+
+  const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/link-google`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ credential: 'mock-host-google-id-token' }),
+  });
+  const body = await response.json();
+  const decodedToken = jwt.verify(body.token, process.env.JWT_SECRET);
+
+  assert.equal(response.status, 200);
+  assert.equal(user.googleId, 'host-google-subject');
+  assert.equal(user.profilePicture, 'https://example.com/host-picture.png');
+  assert.equal(body.user.role, 'HOST');
+  assert.equal(body.user.profileComplete, true);
+  assert.equal(decodedToken.id, user._id);
+});
+
 test('PUT /api/users/profile validates, checks uniqueness, and completes a profile', async (context) => {
   const originalFindOne = User.findOne;
   const originalFindById = User.findById;
@@ -370,7 +539,7 @@ test('PUT /api/users/profile rejects a username already owned by another account
 
   const token = jwt.sign({ id: '507f1f77bcf86cd799439011' }, process.env.JWT_SECRET);
   const baseUrl = `http://127.0.0.1:${server.address().port}/api/users`;
-  const headers = { Authorization: `Bearer ${token}` };
+  const headers = { Authorization: 'Bearer ' + token };
   const availabilityResponse = await fetch(
     `${baseUrl}/username-availability?username=taken-name`,
     { headers }
