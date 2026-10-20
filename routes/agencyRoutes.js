@@ -4,6 +4,9 @@ const router = express.Router();
 const Agency = require('../models/Agency');
 const AgencyApplication = require('../models/AgencyApplication');
 const User = require('../models/User');
+const HostTarget = require('../models/HostTarget');
+const HostDailyProgress = require('../models/HostDailyProgress');
+const Transaction = require('../models/Transaction');
 const auth = require('../middleware/auth');
 const commissionConfig = require('../config/commission');
 const {
@@ -30,6 +33,134 @@ function validateApplicationMessage(message) {
   return message === undefined ||
     (typeof message === 'string' && message.trim().length <= 1000);
 }
+
+function currentMonth(date = new Date()) {
+  return date.toISOString().slice(0, 7);
+}
+
+function monthStart(month) {
+  return new Date(`${month}-01T00:00:00.000Z`);
+}
+
+function targetStatus(target) {
+  return target.liveHoursCompleted >= target.liveHoursTarget &&
+    target.diamondsEarned >= target.diamondTarget ? 'completed' : target.targetStatus;
+}
+
+async function getHostTargetProgress(hostId, agencyId, month = currentMonth()) {
+  const target = await HostTarget.findOneAndUpdate(
+    { hostId, month },
+    { $setOnInsert: { hostId, agencyId, month } },
+    { new: true, upsert: true, setDefaultsOnInsert: true },
+  );
+  const start = monthStart(month);
+  const [timeResult] = await HostDailyProgress.aggregate([
+    { $match: { userId: new mongoose.Types.ObjectId(hostId), date: { $gte: month } } },
+    { $group: { _id: null, seconds: { $sum: '$onMicSeconds' } } },
+  ]);
+  const [diamondResult] = await Transaction.aggregate([
+    { $match: { userId: new mongoose.Types.ObjectId(hostId), type: 'GIFT_RECEIVED', status: 'COMPLETED', createdAt: { $gte: start } } },
+    { $group: { _id: null, diamonds: { $sum: '$amountDiamonds' } } },
+  ]);
+  target.liveHoursCompleted = Number(((timeResult?.seconds || 0) / 3600).toFixed(2));
+  target.diamondsEarned = diamondResult?.diamonds || 0;
+  target.targetStatus = targetStatus(target);
+  await target.save();
+  return target;
+}
+
+function requireRole(role) {
+  return async (req, res, next) => {
+    const user = await User.findById(req.user.id).select('role');
+    if (!user || user.role !== role) return res.status(403).json({ message: `Only ${role} users can access this endpoint.` });
+    return next();
+  };
+}
+
+router.post('/create', auth, requireRole('AGENT'), async (req, res) => {
+  try {
+    const agencyName = typeof req.body?.agencyName === 'string' ? req.body.agencyName.trim() : '';
+    const agencyCode = typeof req.body?.agencyCode === 'string' ? req.body.agencyCode.trim().toUpperCase() : '';
+    if (!agencyName || !agencyCode) return res.status(400).json({ message: 'agencyName and agencyCode are required.' });
+    if (!/^[A-Z0-9_-]{4,24}$/.test(agencyCode)) return res.status(400).json({ message: 'agencyCode must contain 4 to 24 letters, numbers, underscores, or hyphens.' });
+    if (await Agency.exists({ $or: [{ agencyName }, { agencyCode }] })) return res.status(409).json({ message: 'Agency name or agency code is already in use.' });
+    const owner = await User.findById(req.user.id);
+    if (!owner) return res.status(404).json({ message: 'User not found.' });
+    if (owner.agencyId || await Agency.exists({ ownerId: owner._id })) return res.status(409).json({ message: 'You already belong to or own an agency.' });
+    const agency = await Agency.create({ agencyName, agencyCode, name: agencyName, ownerId: owner._id, members: [owner._id], hostsCount: 0 });
+    owner.agencyId = agency._id;
+    await owner.save();
+    return res.status(201).json({ message: 'Agency created successfully.', agency });
+  } catch (error) {
+    if (error.code === 11000) return res.status(409).json({ message: 'Agency name or agency code is already in use.' });
+    return res.status(500).json({ message: 'Could not create the agency.' });
+  }
+});
+
+router.post('/join', auth, requireRole('HOST'), async (req, res) => {
+  try {
+    const agencyCode = typeof req.body?.agencyCode === 'string' ? req.body.agencyCode.trim().toUpperCase() : '';
+    if (!agencyCode) return res.status(400).json({ message: 'agencyCode is required.' });
+    const [agency, host] = await Promise.all([Agency.findOne({ agencyCode }), User.findById(req.user.id)]);
+    if (!agency) return res.status(404).json({ message: 'Agency not found for this agency code.' });
+    if (!host) return res.status(404).json({ message: 'User not found.' });
+    if (host.agencyId) return res.status(409).json({ message: 'You already belong to an agency.' });
+    host.agencyId = agency._id;
+    await host.save();
+    await Agency.findByIdAndUpdate(agency._id, { $addToSet: { members: host._id }, $inc: { hostsCount: 1 } });
+    return res.json({ message: 'Successfully joined the agency.', agencyId: agency._id });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not join the agency.' });
+  }
+});
+
+router.get('/dashboard', auth, requireRole('AGENT'), async (req, res) => {
+  try {
+    const agency = await Agency.findOne({ ownerId: req.user.id });
+    if (!agency) return res.status(404).json({ message: 'Agency not found.' });
+    const hosts = await User.find({ agencyId: agency._id, role: 'HOST' }).select('_id username name avatar profilePicture');
+    const progress = await Promise.all(hosts.map((host) => getHostTargetProgress(host._id, agency._id)));
+    const hostById = new Map(hosts.map((host) => [host._id.toString(), host]));
+    return res.json({
+      agency: { id: agency._id, agencyName: agency.agencyName || agency.name, agencyCode: agency.agencyCode, totalEarnings: agency.totalEarnings || 0, hostsCount: hosts.length },
+      hosts: progress.map((target) => ({ host: hostById.get(target.hostId.toString()), target })),
+      month: currentMonth(),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not load the agency dashboard.' });
+  }
+});
+
+router.get('/host/my-target', auth, requireRole('HOST'), async (req, res) => {
+  try {
+    const host = await User.findById(req.user.id).select('agencyId');
+    if (!host?.agencyId) return res.status(404).json({ message: 'You are not a member of an agency.' });
+    const target = await getHostTargetProgress(host._id, host.agencyId);
+    return res.json({ month: target.month, target });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not load your host target.' });
+  }
+});
+
+router.post('/commission/calculate', auth, requireRole('AGENT'), async (req, res) => {
+  try {
+    const agency = await Agency.findOne({ ownerId: req.user.id });
+    if (!agency) return res.status(404).json({ message: 'Agency not found.' });
+    const hosts = await User.find({ agencyId: agency._id, role: 'HOST' }).select('_id');
+    const [result] = await Transaction.aggregate([
+      { $match: { userId: { $in: hosts.map((host) => host._id) }, type: 'GIFT_RECEIVED', status: 'COMPLETED' } },
+      { $group: { _id: null, totalGifts: { $sum: '$amountDiamonds' } } },
+    ]);
+    const totalGifts = result?.totalGifts || 0;
+    const commissionRate = Number.isFinite(agency.commissionRate) ? (agency.commissionRate > 1 ? agency.commissionRate : agency.commissionRate * 100) : 10;
+    const commissionAmount = Number((totalGifts * commissionRate / 100).toFixed(2));
+    agency.totalEarnings = commissionAmount;
+    await agency.save();
+    return res.json({ agencyId: agency._id, totalGifts, commissionRate, commissionAmount, totalEarnings: agency.totalEarnings });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not calculate agency commission.' });
+  }
+});
 
 router.get('/center', auth, async (req, res) => {
   try {
