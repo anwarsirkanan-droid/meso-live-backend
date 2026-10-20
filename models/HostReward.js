@@ -7,7 +7,8 @@ const hostRewardSchema = new mongoose.Schema({
   micClaimed: { type: Boolean, default: false },
   crownClaimed: { type: Boolean, default: false },
   welcomeClaimed: { type: Boolean, default: false },
-  lastResetDate: { type: Date, default: null }
+  lastResetDate: { type: Date, default: null },
+  hostStartDate: { type: Date, default: Date.now }
 }, { timestamps: true });
 
 module.exports = mongoose.model('HostReward', hostRewardSchema);

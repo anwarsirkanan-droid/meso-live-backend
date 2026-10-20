@@ -9,6 +9,7 @@ const auth = require('../middleware/auth');
 const router = express.Router();
 const MIC_TARGET_SECONDS = 60 * 60;
 const WELCOME_REWARD_COINS = 500;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const DEFAULT_TASKS = [
   { title: 'Daily Login', description: 'Open Meso Live today.', reward: 50, type: 'daily', requirementTarget: 1 },
@@ -36,12 +37,56 @@ async function ensureDefaultTasks() {
   return Task.find({ active: true }).sort({ type: 1, _id: 1 });
 }
 
-async function getHostReward(userId) {
-  const reward = await HostReward.findOneAndUpdate(
-    { userId },
-    { $setOnInsert: { userId, lastResetDate: new Date() } },
-    { upsert: true, new: true }
-  );
+function isSameUtcDay(firstDate, secondDate) {
+  return firstDate && firstDate.toISOString().slice(0, 10) === secondDate.toISOString().slice(0, 10);
+}
+
+function getDaysAsHost(hostStartDate) {
+  return Math.floor((Date.now() - new Date(hostStartDate).getTime()) / DAY_MS) + 1;
+}
+
+function getRewardDetails(hostReward) {
+  const daysAsHost = getDaysAsHost(hostReward.hostStartDate);
+  const micRewardAmount = daysAsHost <= 7 ? 0.90 : 8000;
+  const micRewardType = daysAsHost <= 7 ? 'USD' : 'DIAMONDS';
+  const micRewardLabel = daysAsHost <= 7 ? '$0.90/day' : '8,000/day';
+  return {
+    daysAsHost,
+    micRewardAmount,
+    micRewardType,
+    micRewardLabel,
+    micBtnText: daysAsHost <= 7 ? 'Claim $0.90' : 'Claim 8,000',
+    crownRewardAmount: 3000,
+    crownRewardType: 'DIAMONDS',
+    crownRewardLabel: '3,000 Diamonds/day',
+    crownBtnText: 'Claim 3,000',
+    welcomeRewardAmount: WELCOME_REWARD_COINS,
+    welcomeRewardType: 'COINS',
+    welcomeRewardLabel: `${WELCOME_REWARD_COINS.toLocaleString()} coins`,
+    welcomeBtnText: `Claim ${WELCOME_REWARD_COINS.toLocaleString()}`
+  };
+}
+
+async function getHostReward(userId, options = {}) {
+  const query = HostReward.findOne({ userId });
+  if (options.session) query.session(options.session);
+  const reward = await query;
+  if (!reward) {
+    const created = new HostReward({ userId, lastResetDate: new Date() });
+    await created.save(options.session ? { session: options.session } : undefined);
+    return created;
+  }
+  if (!reward.hostStartDate) {
+    reward.hostStartDate = new Date();
+  }
+  if (!isSameUtcDay(reward.lastResetDate, new Date())) {
+    reward.micSeconds = 0;
+    reward.crownSeconds = 0;
+    reward.micClaimed = false;
+    reward.crownClaimed = false;
+    reward.lastResetDate = new Date();
+  }
+  await reward.save(options.session ? { session: options.session } : undefined);
   return reward;
 }
 
@@ -75,8 +120,7 @@ router.get('/', auth, async (req, res) => {
     };
     if (user.role === 'HOST' || user.role === 'AGENT') {
       const hostRewards = await getHostReward(user._id);
-      response.hostRewards = hostRewards.toObject();
-      response.hostRewards.welcomeReward = WELCOME_REWARD_COINS;
+      response.hostRewards = { ...hostRewards.toObject(), ...getRewardDetails(hostRewards) };
       response.hostLevels = HOST_LEVELS;
     }
     return res.json(response);
@@ -115,13 +159,34 @@ router.post('/:id/claim', auth, async (req, res) => {
 });
 
 async function claimHostReward(req, res, kind) {
-  if (req.user.role !== 'HOST' && req.user.role !== 'AGENT') return res.status(403).json({ message: 'Host rewards are available to hosts only.' });
-  const requirement = kind === 'mic' ? { micSeconds: { $gte: MIC_TARGET_SECONDS }, micClaimed: false } : { crownSeconds: { $gte: MIC_TARGET_SECONDS }, crownClaimed: false };
-  const update = kind === 'mic' ? { $set: { micClaimed: true } } : { $set: { crownClaimed: true } };
-  const reward = await HostReward.findOneAndUpdate({ userId: req.user.id, ...requirement }, update, { new: true });
-  if (!reward) return res.status(400).json({ message: 'Reward is not available yet or has already been claimed.' });
-  if (kind === 'crown') await User.findByIdAndUpdate(req.user.id, { $inc: { diamonds: 3000 } });
-  return res.json({ reward: kind === 'mic' ? 0.9 : 3000, hostRewards: reward });
+  const session = await mongoose.startSession();
+  try {
+    let result;
+    await session.withTransaction(async () => {
+      const user = await User.findById(req.user.id).select('role coins diamonds hostEarningsUsd').session(session);
+      if (!user || (user.role !== 'HOST' && user.role !== 'AGENT')) throw Object.assign(new Error('Host rewards are available to hosts only.'), { status: 403 });
+      const hostReward = await getHostReward(user._id, { session });
+      const rewardDetails = getRewardDetails(hostReward);
+      const field = kind === 'mic' ? 'micSeconds' : 'crownSeconds';
+      const claimedField = kind === 'mic' ? 'micClaimed' : 'crownClaimed';
+      if (hostReward[field] < MIC_TARGET_SECONDS || hostReward[claimedField]) throw Object.assign(new Error('Reward is not available yet or has already been claimed today.'), { status: 400 });
+      hostReward[claimedField] = true;
+      hostReward.lastResetDate = new Date();
+      await hostReward.save({ session });
+      const balanceUpdate = kind === 'crown'
+        ? { $inc: { diamonds: rewardDetails.crownRewardAmount } }
+        : rewardDetails.micRewardType === 'USD'
+          ? { $inc: { hostEarningsUsd: rewardDetails.micRewardAmount } }
+          : { $inc: { diamonds: rewardDetails.micRewardAmount } };
+      const updatedUser = await User.findByIdAndUpdate(user._id, balanceUpdate, { new: true, session }).select('coins diamonds hostEarningsUsd');
+      result = { reward: kind === 'crown' ? rewardDetails.crownRewardAmount : rewardDetails.micRewardAmount, rewardType: kind === 'crown' ? rewardDetails.crownRewardType : rewardDetails.micRewardType, hostRewards: { ...hostReward.toObject(), ...getRewardDetails(hostReward) }, balances: updatedUser };
+    });
+    return res.json(result);
+  } catch (error) {
+    return res.status(error.status || 500).json({ message: error.status ? error.message : 'Could not claim host reward.' });
+  } finally {
+    await session.endSession();
+  }
 }
 
 router.post('/claim-mic', auth, async (req, res) => {
@@ -134,11 +199,12 @@ router.post('/claim-crown', auth, async (req, res) => {
 
 router.post('/claim-welcome', auth, async (req, res) => {
   try {
-    if (req.user.role !== 'HOST' && req.user.role !== 'AGENT') return res.status(403).json({ message: 'Host rewards are available to hosts only.' });
+    const user = await User.findById(req.user.id).select('role');
+    if (!user || (user.role !== 'HOST' && user.role !== 'AGENT')) return res.status(403).json({ message: 'Host rewards are available to hosts only.' });
     const reward = await HostReward.findOneAndUpdate({ userId: req.user.id, welcomeClaimed: false }, { $set: { welcomeClaimed: true } }, { new: true });
     if (!reward) return res.status(400).json({ message: 'Welcome reward has already been claimed.' });
-    const user = await User.findByIdAndUpdate(req.user.id, { $inc: { coins: WELCOME_REWARD_COINS } }, { new: true }).select('coins');
-    return res.json({ reward: WELCOME_REWARD_COINS, coins: user.coins, hostRewards: reward });
+    const updatedUser = await User.findByIdAndUpdate(req.user.id, { $inc: { coins: WELCOME_REWARD_COINS } }, { new: true }).select('coins');
+    return res.json({ reward: WELCOME_REWARD_COINS, coins: updatedUser.coins, hostRewards: { ...reward.toObject(), ...getRewardDetails(reward) } });
   } catch (error) {
     return res.status(500).json({ message: 'Could not claim welcome reward.' });
   }

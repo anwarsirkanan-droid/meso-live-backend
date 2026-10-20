@@ -38,6 +38,7 @@ const userSchema = new mongoose.Schema({
   bio: { type: String, default: '' },
   coins: { type: Number, default: 0 },
   diamonds: { type: Number, default: 0 },
+  hostEarningsUsd: { type: Number, default: 0, min: 0 },
   totalRechargedCoins: { type: Number, default: 0 },
   charmPoints: { type: Number, default: 0 },
   isVerified: { type: Boolean, default: false },
