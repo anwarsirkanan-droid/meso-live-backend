@@ -5,8 +5,10 @@ const { recordHostTime } = require('../services/hostDailyTaskService');
 
 module.exports = (io, socket) => {
   const joinedRoomIds = new Map();
+  const joiningRoomIds = new Map();
   const hostTaskSessions = new Map();
   const userId = socket.data.userId;
+  let disconnecting = false;
   const relaySignal = (event, payload = {}) => {
     const roomId = getRoomId(payload);
     const targetSocketId = [payload.target, payload.to, payload.peerId]
@@ -69,29 +71,19 @@ module.exports = (io, socket) => {
     }
   };
 
-  const joinRoom = async (payload, acknowledge) => {
-    const acknowledgeJoin = (result) => {
-      if (typeof acknowledge === 'function') acknowledge(result);
-    };
+  const performJoin = async (roomId) => {
+    if (disconnecting) return { error: 'Socket is disconnecting' };
     try {
-      const roomId = getRoomId(payload);
       if (!mongoose.Types.ObjectId.isValid(roomId)) {
-        acknowledgeJoin({ error: 'Invalid room ID' });
-        return socket.emit('error', { message: 'Invalid room ID' });
-      }
-      if (joinedRoomIds.has(roomId)) {
-        acknowledgeJoin({ roomId });
-        return;
+        return { error: 'Invalid room ID' };
       }
 
       const room = await Room.findById(roomId);
       if (!room) {
-        acknowledgeJoin({ error: 'Room not found' });
-        return socket.emit('error', { message: 'Room not found' });
+        return { error: 'Room not found' };
       }
       if (room.bannedUsers?.some((bannedUserId) => bannedUserId.toString() === userId)) {
-        acknowledgeJoin({ error: 'You are banned from entering this room' });
-        return socket.emit('error', { message: 'You are banned from entering this room' });
+        return { error: 'You are banned from entering this room' };
       }
 
       const isHost = room.ownerId.toString() === userId;
@@ -105,11 +97,10 @@ module.exports = (io, socket) => {
         { new: true }
       ).populate('seats.userId', 'username avatar');
       if (!updatedRoom) {
-        joinedRoomIds.delete(roomId);
         await socket.leave(roomId);
-        acknowledgeJoin({ error: 'Room no longer exists' });
-        return socket.emit('error', { message: 'Room no longer exists' });
+        return { error: 'Room no longer exists' };
       }
+      joinedRoomIds.set(roomId, isHost);
       io.to(roomId).emit('room_updated', updatedRoom);
       io.to(roomId).emit('user_joined', {
         userId,
@@ -123,11 +114,42 @@ module.exports = (io, socket) => {
         startHostTaskTracking(roomId);
         io.emit('room-status-changed', { roomId, isLive: true });
       }
-      acknowledgeJoin({ roomId });
+      return { roomId };
     } catch (error) {
-      acknowledgeJoin({ error: 'Could not join this room.' });
-      socket.emit('error', { message: error.message });
+      joinedRoomIds.delete(roomId);
+      if (socket.rooms?.has(roomId)) {
+        try {
+          await socket.leave(roomId);
+        } catch (leaveError) {
+          console.error(`Failed to leave room ${roomId} after a join error:`, leaveError);
+        }
+      }
+      console.error(`Failed to join room ${roomId}:`, error);
+      return { error: 'Could not join this room.' };
     }
+  };
+
+  const joinRoom = async (payload, acknowledge) => {
+    const roomId = getRoomId(payload);
+    if (!mongoose.Types.ObjectId.isValid(roomId)) {
+      const result = { error: 'Invalid room ID' };
+      if (typeof acknowledge === 'function') acknowledge(result);
+      return socket.emit('error', { message: result.error });
+    }
+    if (joinedRoomIds.has(roomId)) {
+      if (typeof acknowledge === 'function') acknowledge({ roomId });
+      return;
+    }
+
+    let pendingJoin = joiningRoomIds.get(roomId);
+    if (!pendingJoin) {
+      pendingJoin = performJoin(roomId);
+      joiningRoomIds.set(roomId, pendingJoin);
+    }
+    const result = await pendingJoin;
+    if (joiningRoomIds.get(roomId) === pendingJoin) joiningRoomIds.delete(roomId);
+    if (typeof acknowledge === 'function') acknowledge(result);
+    if (result.error) socket.emit('error', { message: result.error });
   };
 
   socket.on('join_room', joinRoom);
@@ -223,7 +245,9 @@ module.exports = (io, socket) => {
   });
 
   socket.on('disconnect', async () => {
-    for (const roomId of joinedRoomIds.keys()) {
+    disconnecting = true;
+    await Promise.all(joiningRoomIds.values());
+    for (const roomId of [...joinedRoomIds.keys()]) {
       try {
         await leaveRoom(roomId);
       } catch (error) {

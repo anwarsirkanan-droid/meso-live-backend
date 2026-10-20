@@ -32,6 +32,7 @@ const chatSocket = require('./sockets/chatSocket');
 const giftSocket = require('./sockets/giftSocket');
 const gameSocket = require('./sockets/gameSocket');
 const { connectToMongo } = require('./config/database');
+const { isTokenRevoked } = require('./services/tokenRevocationService');
 
 const app = express();
 const configuredOrigins = process.env.CORS_ORIGINS
@@ -95,22 +96,31 @@ async function startServer() {
     cors: { origin: allowedOrigins, credentials: true }
   });
 
-  io.use((socket, next) => {
-    try {
-      const token = socket.handshake.auth && socket.handshake.auth.token;
-      if (typeof token !== 'string') {
-        return next(new Error('Authentication required'));
-      }
+  io.use(async (socket, next) => {
+    const token = socket.handshake.auth && socket.handshake.auth.token;
+    if (typeof token !== 'string') {
+      return next(new Error('Authentication required'));
+    }
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
       if (!decoded.id) {
         return next(new Error('Invalid authentication token'));
       }
-
-      socket.data.userId = decoded.id;
-      next();
     } catch (error) {
-      next(new Error('Invalid authentication token'));
+      return next(new Error('Invalid authentication token'));
+    }
+
+    try {
+      if (await isTokenRevoked(token)) {
+        return next(new Error('Authentication token has been revoked'));
+      }
+      socket.data.userId = decoded.id;
+      return next();
+    } catch (error) {
+      console.error('Could not verify socket token revocation status:', error);
+      return next(new Error('Authentication service is unavailable'));
     }
   });
 
