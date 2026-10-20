@@ -332,6 +332,35 @@ router.post('/link-google', auth, async (req, res) => {
   }
 });
 
+router.post('/change-password', auth, async (req, res) => {
+  const currentPassword = typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
+  const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+  }
+  if (currentPassword && currentPassword === newPassword) {
+    return res.status(400).json({ error: 'New password must be different from the current password.' });
+  }
+
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    if (user.password) {
+      const matches = await bcrypt.compare(currentPassword, user.password);
+      if (!matches) return res.status(400).json({ error: 'Current password is incorrect.' });
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save({ validateModifiedOnly: true });
+    return res.json({ message: 'Password updated successfully.' });
+  } catch (error) {
+    console.error('Could not change password:', error);
+    return res.status(500).json({ error: 'Could not update your password. Please try again.' });
+  }
+});
+
 // 3. LOGOUT API
 router.post('/logout', (req, res) => {
   res.status(200).json({ message: 'Logged out successfully!' });

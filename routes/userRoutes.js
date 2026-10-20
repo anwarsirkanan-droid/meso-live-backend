@@ -86,6 +86,40 @@ router.put('/profile', auth, async (req, res) => {
   }
 });
 
+router.put('/account', auth, async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : undefined;
+  const phoneNumber = typeof req.body?.phoneNumber === 'string' ? req.body.phoneNumber.trim() : undefined;
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (email !== undefined && !emailPattern.test(email)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
+  }
+  if (phoneNumber !== undefined && phoneNumber && phoneNumber.length < 7) {
+    return res.status(400).json({ message: 'Please enter a valid phone number.' });
+  }
+  if (email === undefined && phoneNumber === undefined) {
+    return res.status(400).json({ message: 'An email or phone number is required.' });
+  }
+
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+    if (email !== undefined && email !== user.email) {
+      const existingUser = await User.findOne({ email, _id: { $ne: user._id } }).select('_id');
+      if (existingUser) return res.status(409).json({ message: 'That email is already linked to another account.' });
+      user.email = email;
+    }
+    if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
+    await user.save({ validateModifiedOnly: true });
+    const profile = user.toJSON();
+    delete profile.password;
+    return res.json({ message: 'Account details updated successfully.', user: profile });
+  } catch (error) {
+    if (error.code === 11000) return res.status(409).json({ message: 'That email is already linked to another account.' });
+    return res.status(500).json({ message: 'Could not update your account details.' });
+  }
+});
+
 router.put('/avatar', auth, async (req, res) => {
   const avatar = req.body?.avatar;
   const match = typeof avatar === 'string'
