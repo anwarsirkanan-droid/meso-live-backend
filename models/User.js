@@ -28,6 +28,8 @@ const userSchema = new mongoose.Schema({
     enum: ['USER', 'HOST', 'AGENT', 'ADMIN'], 
     default: 'USER' 
   },
+  isHost: { type: Boolean, default: false },
+  isAgent: { type: Boolean, default: false },
   avatar: { type: String, default: '' },
   profilePicture: {
     type: String,
@@ -39,6 +41,7 @@ const userSchema = new mongoose.Schema({
   coins: { type: Number, default: 0 },
   diamonds: { type: Number, default: 0 },
   hostEarningsUsd: { type: Number, default: 0, min: 0 },
+  hostStartDate: { type: Date, default: null },
   totalRechargedCoins: { type: Number, default: 0 },
   charmPoints: { type: Number, default: 0 },
   isVerified: { type: Boolean, default: false },

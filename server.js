@@ -34,6 +34,7 @@ const giftSocket = require('./sockets/giftSocket');
 const gameSocket = require('./sockets/gameSocket');
 const { connectToMongo } = require('./config/database');
 const { isTokenRevoked } = require('./services/tokenRevocationService');
+const { ensureHostAgentUsers } = require('./scripts/updateTargetUserRole');
 
 const app = express();
 const configuredOrigins = process.env.CORS_ORIGINS
@@ -93,6 +94,8 @@ async function startServer() {
   }
 
   await connectToMongo(mongoose);
+  const roleBootstrap = await ensureHostAgentUsers();
+  console.log(`Host and agency bootstrap completed for ${roleBootstrap.users.length} user(s).`);
 
   const server = http.createServer(app);
   const io = new Server(server, {

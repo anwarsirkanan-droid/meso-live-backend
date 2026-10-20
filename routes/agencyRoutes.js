@@ -71,8 +71,13 @@ async function getHostTargetProgress(hostId, agencyId, month = currentMonth()) {
 
 function requireRole(role) {
   return async (req, res, next) => {
-    const user = await User.findById(req.user.id).select('role');
-    if (!user || user.role !== role) return res.status(403).json({ message: `Only ${role} users can access this endpoint.` });
+    const user = await User.findById(req.user.id).select('role isHost isAgent');
+    const hasRole = role === 'HOST'
+      ? user?.role === 'HOST' || user?.isHost === true
+      : role === 'AGENT'
+        ? user?.role === 'AGENT' || user?.isAgent === true
+        : user?.role === role;
+    if (!hasRole) return res.status(403).json({ message: `Only ${role} users can access this endpoint.` });
     return next();
   };
 }

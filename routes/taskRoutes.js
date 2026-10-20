@@ -15,7 +15,7 @@ const DAILY_TASKS = [
 router.get('/host-daily', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('role');
-    if (!user || user.role !== 'HOST') {
+    if (!user || (user.role !== 'HOST' && user.isHost !== true)) {
       return res.status(403).json({ message: 'Host daily tasks are available to hosts only.' });
     }
     return res.json(await getHostDailyProgress(req.user.id));
@@ -27,7 +27,7 @@ router.get('/host-daily', auth, async (req, res) => {
 router.post('/host-daily/:taskId/claim', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('role');
-    if (!user || user.role !== 'HOST') {
+    if (!user || (user.role !== 'HOST' && user.isHost !== true)) {
       return res.status(403).json({ message: 'Host daily task rewards are available to hosts only.' });
     }
     return res.json(await claimHostDailyTask(req.user.id, req.params.taskId));
