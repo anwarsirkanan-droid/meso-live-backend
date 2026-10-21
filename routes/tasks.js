@@ -107,7 +107,7 @@ function serializeTask(task, progress) {
 
 router.get('/', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('coins role');
+    const user = await User.findById(req.user.id).select('coins role isHost hostVerificationStatus');
     if (!user) return res.status(404).json({ message: 'User not found.' });
     const tasks = await ensureDefaultTasks();
     const progress = await UserTaskProgress.find({ userId: user._id, taskId: { $in: tasks.map((task) => task._id) } });
@@ -115,10 +115,11 @@ router.get('/', auth, async (req, res) => {
     const response = {
       coins: user.coins,
       role: user.role,
+      hostVerificationStatus: user.hostVerificationStatus || 'NOT_SUBMITTED',
       dailyTasks: tasks.filter((task) => task.type === 'daily').map((task) => serializeTask(task, progressByTask.get(String(task._id)))),
       weeklyTasks: tasks.filter((task) => task.type === 'weekly').map((task) => serializeTask(task, progressByTask.get(String(task._id))))
     };
-    if (user.role === 'HOST' || user.role === 'AGENT') {
+    if ((user.role === 'HOST' || user.role === 'AGENT' || user.isHost === true) && user.hostVerificationStatus === 'APPROVED') {
       const hostRewards = await getHostReward(user._id);
       response.hostRewards = { ...hostRewards.toObject(), ...getRewardDetails(hostRewards) };
       response.hostLevels = HOST_LEVELS;
@@ -163,8 +164,9 @@ async function claimHostReward(req, res, kind) {
   try {
     let result;
     await session.withTransaction(async () => {
-      const user = await User.findById(req.user.id).select('role coins diamonds hostEarningsUsd').session(session);
-      if (!user || (user.role !== 'HOST' && user.role !== 'AGENT')) throw Object.assign(new Error('Host rewards are available to hosts only.'), { status: 403 });
+      const user = await User.findById(req.user.id).select('role isHost hostVerificationStatus coins diamonds hostEarningsUsd').session(session);
+      if (!user || (user.role !== 'HOST' && user.role !== 'AGENT' && user.isHost !== true)) throw Object.assign(new Error('Host rewards are available to hosts only.'), { status: 403 });
+      if (user.hostVerificationStatus !== 'APPROVED') throw Object.assign(new Error('Host verification must be approved before claiming rewards.'), { status: 403 });
       const hostReward = await getHostReward(user._id, { session });
       const rewardDetails = getRewardDetails(hostReward);
       const field = kind === 'mic' ? 'micSeconds' : 'crownSeconds';
@@ -199,8 +201,9 @@ router.post('/claim-crown', auth, async (req, res) => {
 
 router.post('/claim-welcome', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('role');
-    if (!user || (user.role !== 'HOST' && user.role !== 'AGENT')) return res.status(403).json({ message: 'Host rewards are available to hosts only.' });
+    const user = await User.findById(req.user.id).select('role isHost hostVerificationStatus');
+    if (!user || (user.role !== 'HOST' && user.role !== 'AGENT' && user.isHost !== true)) return res.status(403).json({ message: 'Host rewards are available to hosts only.' });
+    if (user.hostVerificationStatus !== 'APPROVED') return res.status(403).json({ message: 'Host verification must be approved before claiming rewards.' });
     const reward = await HostReward.findOneAndUpdate({ userId: req.user.id, welcomeClaimed: false }, { $set: { welcomeClaimed: true } }, { new: true });
     if (!reward) return res.status(400).json({ message: 'Welcome reward has already been claimed.' });
     const updatedUser = await User.findByIdAndUpdate(req.user.id, { $inc: { coins: WELCOME_REWARD_COINS } }, { new: true }).select('coins');

@@ -46,6 +46,11 @@ const userSchema = new mongoose.Schema({
   charmPoints: { type: Number, default: 0 },
   isVerified: { type: Boolean, default: false },
   isFaceVerified: { type: Boolean, default: false },
+  hostVerificationStatus: {
+    type: String,
+    enum: ['NOT_SUBMITTED', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'],
+    default: 'NOT_SUBMITTED'
+  },
   isOnline: { type: Boolean, default: false },
   lastSeen: { type: Date, default: null },
   followersCount: { type: Number, default: 0 },
