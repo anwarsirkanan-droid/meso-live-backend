@@ -16,6 +16,7 @@ const userSchema = new mongoose.Schema({
   country: {
     type: String,
     trim: true,
+    default: 'Ethiopia',
     required: [function isProfileComplete() { return this.profileComplete; }, 'Country is required']
   },
   region: { type: String, trim: true, default: '' },
@@ -23,6 +24,7 @@ const userSchema = new mongoose.Schema({
   gender: {
     type: String,
     enum: ['Male', 'Female', 'Other'],
+    default: 'Male',
     required: [function isProfileComplete() { return this.profileComplete; }, 'Gender is required']
   },
   role: { 
@@ -48,6 +50,8 @@ const userSchema = new mongoose.Schema({
   hostStartDate: { type: Date, default: null },
   totalRechargedCoins: { type: Number, default: 0 },
   charmPoints: { type: Number, default: 0 },
+  wealthLevel: { type: Number, default: 1 },
+  charmLevel: { type: Number, default: 1 },
   isVerified: { type: Boolean, default: false },
   isFaceVerified: { type: Boolean, default: false },
   isVerifiedHost: { type: Boolean, default: false },
@@ -66,7 +70,8 @@ const userSchema = new mongoose.Schema({
   checkInStreak: { type: Number, default: 0 },
   isVip: { type: Boolean, default: false },
   rewardCoins: { type: Number, default: 0 },
-  agencyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Agency', default: null }
+  agencyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Agency', default: null },
+  agencyName: { type: String, trim: true, default: '' }
 }, { timestamps: true });
 
 userSchema.index({ publicId: 1 }, { unique: true, sparse: true });

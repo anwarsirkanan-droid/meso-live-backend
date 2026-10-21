@@ -44,7 +44,11 @@ function withProfileMetadata(profile) {
   value.isHost = !value.isAgent && (value.isHost === true || String(value.role || '').toUpperCase() === 'HOST');
   value.age = calculateAge(value.birthday);
   value.countryFlag = value.countryFlag || countryFlag(value.country);
-  value.agencyName = value.agencyName || (value.agencyId && typeof value.agencyId === 'object' ? value.agencyId.name : '');
+  value.agencyName = (
+    value.agencyId && typeof value.agencyId === 'object'
+      ? value.agencyId.agencyName || value.agencyId.name
+      : ''
+  ) || value.agencyName || '';
   value.customId = value.customId || value.publicId || value.id || value._id;
   return value;
 }

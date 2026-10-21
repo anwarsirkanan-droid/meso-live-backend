@@ -88,7 +88,7 @@ router.get('/me', auth, async (req, res) => {
   }
 
   try {
-    const user = await User.findById(req.user.id).select('-password').populate('agencyId', 'name');
+    const user = await User.findById(req.user.id).select('-password').populate('agencyId', 'name agencyName');
     if (!user) return res.status(404).json({ error: 'User not found.' });
     if (user.publicId == null) await user.save({ validateModifiedOnly: true });
 

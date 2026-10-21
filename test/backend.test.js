@@ -150,6 +150,16 @@ test('agency owner/member fields and uppercase user roles validate', async () =>
   await assert.rejects(invalidRole.validate(), /`agency` is not a valid enum value/);
 });
 
+test('user profile detail fields have the requested defaults', () => {
+  const user = new User({ username: 'profile-defaults', email: 'profile-defaults@example.com' });
+
+  assert.equal(user.gender, 'Male');
+  assert.equal(user.country, 'Ethiopia');
+  assert.equal(user.agencyName, '');
+  assert.equal(user.wealthLevel, 1);
+  assert.equal(user.charmLevel, 1);
+});
+
 test('gift and game calculations preserve integer currency amounts', () => {
   assert.deepEqual(
     processGiftDistribution({ hostShareRate: 0.7, charmRate: 0.2 }, 99),

@@ -12,7 +12,7 @@ const resolveUser = (userId) => {
   const query = mongoose.Types.ObjectId.isValid(userId)
     ? User.findById(userId)
     : Number.isInteger(Number(userId)) ? User.findOne({ publicId: Number(userId) }) : null;
-  return query?.select(publicUserFields).populate('agencyId', 'name');
+  return query?.select(publicUserFields).populate('agencyId', 'name agencyName');
 };
 
 const normalizeUserId = (rawValue) => {
@@ -26,7 +26,7 @@ const normalizeUserId = (rawValue) => {
 
 const getProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('-password').populate('agencyId', 'name');
+    const user = await User.findById(req.user.id).select('-password').populate('agencyId', 'name agencyName');
     if (!user) return res.status(404).json({ message: 'User not found' });
     if (user.publicId == null) await user.save({ validateModifiedOnly: true });
     return res.json(withProfileMetadata(user));
@@ -60,7 +60,7 @@ router.get('/search', auth, async (req, res) => {
   }
 });
 
-router.get('/:userId/profile', auth, async (req, res) => {
+const getUserProfile = async (req, res) => {
   try {
     const user = await resolveUser(req.params.userId);
     if (!user) return res.status(404).json({ message: 'User not found.' });
@@ -85,7 +85,9 @@ router.get('/:userId/profile', auth, async (req, res) => {
   } catch (err) {
     return res.status(500).json({ message: 'Could not load this profile.' });
   }
-});
+};
+
+router.get('/:userId/profile', auth, getUserProfile);
 
 router.post('/:userId/follow', auth, async (req, res) => {
   const targetUserId = normalizeUserId(req.params.userId);
@@ -358,5 +360,7 @@ router.put('/update', auth, async (req, res) => {
     return res.status(500).json({ message: err.message });
   }
 });
+
+router.get('/:userId', auth, getUserProfile);
 
 module.exports = router;

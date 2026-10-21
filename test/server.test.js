@@ -9,6 +9,7 @@ process.env.JWT_SECRET ||= 'test-jwt-secret-that-is-long-enough-for-production';
 process.env.GOOGLE_CLIENT_ID ||= 'test-google-client-id.apps.googleusercontent.com';
 
 const User = require('../models/User');
+const Room = require('../models/Room');
 const Withdrawal = require('../models/Withdrawal');
 const Transaction = require('../models/Transaction');
 const RevokedToken = require('../models/RevokedToken');
@@ -141,6 +142,73 @@ test('GET /api/auth/me returns a valid public profile and reports lookup failure
   assert.deepEqual(await failedResponse.json(), {
     error: 'Could not load your profile. Please try again.',
   });
+});
+
+test('GET /api/users/me and /api/users/:id return profile details and linked agency names', async (context) => {
+  const originalFindById = User.findById;
+  const originalRoomFindOne = Room.findOne;
+  const user = {
+    _id: '507f1f77bcf86cd799439011',
+    publicId: 8849302,
+    username: 'profile-user',
+    profileComplete: false,
+    gender: 'Female',
+    country: 'Ethiopia',
+    agencyName: 'Old Agency Name',
+    agencyId: { _id: '507f1f77bcf86cd799439013', agencyName: 'Primary Agency', name: 'Primary Agency' },
+    wealthLevel: 3,
+    charmLevel: 4,
+    role: 'AGENT',
+    toObject() {
+      return { ...this };
+    },
+  };
+  User.findById = (id) => {
+    assert.equal(id, user._id);
+    return {
+      select(fields) {
+        assert.ok(['-password', '-password -googleId'].includes(fields));
+        return this;
+      },
+      populate(path, fields) {
+        assert.equal(path, 'agencyId');
+        assert.equal(fields, 'name agencyName');
+        return Promise.resolve(user);
+      },
+    };
+  };
+  Room.findOne = () => ({
+    sort() {
+      return this;
+    },
+    select: async () => null,
+  });
+
+  const server = app.listen(0);
+  context.after(async () => {
+    User.findById = originalFindById;
+    Room.findOne = originalRoomFindOne;
+    await new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  });
+  await new Promise((resolve) => server.once('listening', resolve));
+
+  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET);
+  const headers = { Authorization: `Bearer ${token}` };
+  const baseUrl = `http://127.0.0.1:${server.address().port}/api/users`;
+
+  for (const path of ['/me', `/${user._id}`]) {
+    const response = await fetch(`${baseUrl}${path}`, { headers });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.gender, 'Female');
+    assert.equal(body.country, 'Ethiopia');
+    assert.equal(body.agencyName, 'Primary Agency');
+    assert.equal(body.wealthLevel, 3);
+    assert.equal(body.charmLevel, 4);
+  }
 });
 
 test('CORS allows the deployed frontend origin', async (context) => {
