@@ -75,9 +75,16 @@ test('room participants exchange authenticated, room-scoped WebRTC signaling eve
   io.sockets.sockets.set(outside.id, outside);
   roomSocket(io, first);
   roomSocket(io, second);
-  await first.handlers.get('join-room')(roomId);
+  let joinResult;
+  await first.handlers.get('join_room')({ roomId, userId: 'untrusted-client-user' }, (result) => {
+    joinResult = result;
+  });
   await second.handlers.get('join-room')(roomId);
 
+  assert.deepEqual(joinResult, { roomId });
+  assert.ok(first.roomMembership.some(({ action, id }) => action === 'join' && id === roomId));
+  assert.equal(room.currentListenersCount, 2);
+  assert.equal(room.isLive, false);
   assert.ok(second.broadcasts.some(({ event, payload }) =>
     event === 'user-joined' && payload.socketId === second.id
   ));
