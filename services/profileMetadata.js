@@ -40,7 +40,8 @@ function countryFlag(country) {
 
 function withProfileMetadata(profile) {
   const value = typeof profile.toObject === 'function' ? profile.toObject() : { ...profile };
-  value.isHost = value.isHost === true || String(value.role || '').toUpperCase() === 'HOST';
+  value.isAgent = value.isAgent === true || String(value.role || '').toUpperCase() === 'AGENT';
+  value.isHost = !value.isAgent && (value.isHost === true || String(value.role || '').toUpperCase() === 'HOST');
   value.age = calculateAge(value.birthday);
   value.countryFlag = value.countryFlag || countryFlag(value.country);
   value.agencyName = value.agencyName || (value.agencyId && typeof value.agencyId === 'object' ? value.agencyId.name : '');
