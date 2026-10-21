@@ -5,6 +5,7 @@ const FaceVerification = require('../models/FaceVerification');
 const User = require('../models/User');
 const Host = require('../models/Host');
 const { verifyToken } = require('../middleware/authMiddleware');
+const { validateFaceImage } = require('../services/faceValidationService');
 
 // TODO: Real face-match AI (AWS Rekognition/Face++) can be added later via adapter pattern
 const isFaceImage = (value) => {
@@ -12,34 +13,51 @@ const isFaceImage = (value) => {
   return /^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value);
 };
 
-router.post('/submit', verifyToken, async (req, res) => {
+async function submitFaceVerification(req, res) {
   try {
-    const { faceImage } = req.body || {};
+    const { faceImage, deviceId } = req.body || {};
     if (!isFaceImage(faceImage)) {
       return res.status(400).json({ message: 'faceImage must be a valid image URL or base64 image' });
     }
-    const existingPending = await FaceVerification.findOne({
-      userId: req.user.id,
-      status: 'PENDING_APPROVAL'
-    });
-    if (existingPending) {
-      return res.status(409).json({
-        message: 'A face verification is already pending review',
-        verification: existingPending
-      });
+    if (typeof deviceId !== 'string' || deviceId.trim().length < 8 || deviceId.trim().length > 200) {
+      return res.status(400).json({ message: 'A valid device ID is required.' });
     }
+    const faceCheck = validateFaceImage(faceImage);
+    if (!faceCheck.valid) return res.status(400).json({ message: faceCheck.message });
+    const duplicateDevice = await FaceVerification.findOne({ deviceId: deviceId.trim(), userId: { $ne: req.user.id } }).select('_id userId');
+    if (duplicateDevice) return res.status(409).json({ message: 'Device already verified under another account' });
+    const existingApproved = await FaceVerification.findOne({ userId: req.user.id, status: 'APPROVED' });
+    if (existingApproved) return res.status(409).json({ message: 'This account is already face verified.' });
     const verification = await FaceVerification.create({
       userId: req.user.id,
-      faceImage
+      faceImage,
+      deviceId: deviceId.trim(),
+      status: 'APPROVED',
+      verifiedAt: new Date(),
+      adminNote: 'Automatically approved after face and device validation.',
     });
     await User.findByIdAndUpdate(req.user.id, {
-      $set: { hostVerificationStatus: 'PENDING_APPROVAL', isFaceVerified: false }
+      $set: {
+        hostVerificationStatus: 'APPROVED',
+        isFaceVerified: true,
+        isVerifiedHost: true,
+        faceVerificationStatus: 'Approved',
+      }
     });
-    return res.status(201).json({ message: 'Face verification submitted', verification });
+    await Host.findOneAndUpdate(
+      { userId: req.user.id },
+      { $set: { faceVerified: true } },
+      { upsert: false },
+    );
+    return res.status(201).json({ message: 'Face verification approved', verification });
   } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ message: 'Device already verified under another account' });
     return res.status(500).json({ message: err.message });
   }
-});
+}
+
+router.post('/submit', verifyToken, submitFaceVerification);
+router.post('/', verifyToken, submitFaceVerification);
 
 router.get('/status', verifyToken, async (req, res) => {
   try {
@@ -102,7 +120,13 @@ router.put('/:id/review', verifyToken, async (req, res) => {
     const isVerified = status === 'APPROVED';
     await User.findOneAndUpdate(
       { _id: verification.userId },
-      { $set: { isVerified, isFaceVerified: isVerified, hostVerificationStatus: status } }
+      { $set: {
+        isVerified,
+        isFaceVerified: isVerified,
+        isVerifiedHost: isVerified,
+        hostVerificationStatus: status,
+        faceVerificationStatus: status === 'APPROVED' ? 'Approved' : 'Rejected',
+      } }
     );
     await Host.findOneAndUpdate(
       { userId: verification.userId },

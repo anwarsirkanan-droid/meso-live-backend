@@ -84,6 +84,7 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/theme', themeRoutes);
 app.use('/api/app-settings', appSettingsRoutes);
 app.use('/api/face-verification', faceVerificationRoutes);
+app.use('/api/users/face-verification', faceVerificationRoutes);
 app.use('/api/invitation', invitationRoutes);
 
 async function startServer() {

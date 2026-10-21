@@ -50,6 +50,8 @@ const userSchema = new mongoose.Schema({
   charmPoints: { type: Number, default: 0 },
   isVerified: { type: Boolean, default: false },
   isFaceVerified: { type: Boolean, default: false },
+  isVerifiedHost: { type: Boolean, default: false },
+  faceVerificationStatus: { type: String, enum: ['Pending', 'Approved', 'Rejected'], default: 'Pending' },
   hostVerificationStatus: {
     type: String,
     enum: ['NOT_SUBMITTED', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'],
