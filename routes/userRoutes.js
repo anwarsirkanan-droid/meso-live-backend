@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
+const Notification = require('../models/Notification');
 const Room = require('../models/Room');
 const auth = require('../middleware/auth');
 const mongoose = require('mongoose');
@@ -88,39 +89,43 @@ router.get('/:userId/profile', auth, async (req, res) => {
 
 router.post('/:userId/follow', auth, async (req, res) => {
   const targetUserId = normalizeUserId(req.params.userId);
-  const currentUserId = req.user.id;
 
   if (!targetUserId) {
     return res.status(400).json({ message: 'A valid userId is required.' });
   }
-  if (new mongoose.Types.ObjectId(targetUserId).equals(currentUserId)) {
-    return res.status(400).json({ message: 'You cannot follow yourself.' });
-  }
 
   try {
+    const targetQuery = mongoose.Types.ObjectId.isValid(targetUserId)
+      ? User.findById(targetUserId)
+      : User.findOne({ publicId: Number(targetUserId) });
     const [currentUser, targetUser] = await Promise.all([
-      User.findById(currentUserId).select('_id username following followers followingCount followersCount'),
-      User.findById(targetUserId).select('_id username following followers followingCount followersCount')
+      User.findById(req.user.id).select('_id username following followers followingCount followersCount'),
+      targetQuery.select('_id username following followers followingCount followersCount')
     ]);
 
     if (!currentUser || !targetUser) {
       return res.status(404).json({ message: 'User not found.' });
     }
 
-    if (currentUser.following.some((id) => id && id.toString() === targetUserId)) {
+    if (targetUser._id.equals(currentUser._id)) {
+      return res.status(400).json({ message: 'You cannot follow yourself.' });
+    }
+
+    const canonicalTargetId = targetUser._id.toString();
+    if (currentUser.following.some((id) => id && id.toString() === canonicalTargetId)) {
       return res.status(409).json({ message: 'You already follow this user' });
     }
 
-    currentUser.following = Array.from(new Set([...(currentUser.following || []).map((id) => id.toString()), targetUserId]));
+    currentUser.following = Array.from(new Set([...(currentUser.following || []).map((id) => id.toString()), canonicalTargetId]));
     currentUser.followingCount = currentUser.following.length;
 
-    targetUser.followers = Array.from(new Set([...(targetUser.followers || []).map((id) => id.toString()), currentUserId.toString()]));
+    targetUser.followers = Array.from(new Set([...(targetUser.followers || []).map((id) => id.toString()), currentUser._id.toString()]));
     targetUser.followersCount = targetUser.followers.length;
 
     await Promise.all([currentUser.save({ validateModifiedOnly: true }), targetUser.save({ validateModifiedOnly: true })]);
 
     await Notification.create({
-      userId: targetUserId,
+      userId: targetUser._id,
       type: 'FOLLOW',
       title: 'New follower',
       message: `${currentUser.username} started following you.`
@@ -134,34 +139,38 @@ router.post('/:userId/follow', auth, async (req, res) => {
 
 router.post('/:userId/unfollow', auth, async (req, res) => {
   const targetUserId = normalizeUserId(req.params.userId);
-  const currentUserId = req.user.id;
 
   if (!targetUserId) {
     return res.status(400).json({ message: 'A valid userId is required.' });
   }
-  if (new mongoose.Types.ObjectId(targetUserId).equals(currentUserId)) {
-    return res.status(400).json({ message: 'You cannot unfollow yourself.' });
-  }
 
   try {
+    const targetQuery = mongoose.Types.ObjectId.isValid(targetUserId)
+      ? User.findById(targetUserId)
+      : User.findOne({ publicId: Number(targetUserId) });
     const [currentUser, targetUser] = await Promise.all([
-      User.findById(currentUserId).select('_id following followers followingCount followersCount'),
-      User.findById(targetUserId).select('_id following followers followingCount followersCount')
+      User.findById(req.user.id).select('_id following followers followingCount followersCount'),
+      targetQuery.select('_id followers followersCount')
     ]);
 
     if (!currentUser || !targetUser) {
       return res.status(404).json({ message: 'User not found.' });
     }
 
-    const isFollowing = currentUser.following.some((id) => id && id.toString() === targetUserId);
+    if (targetUser._id.equals(currentUser._id)) {
+      return res.status(400).json({ message: 'You cannot unfollow yourself.' });
+    }
+
+    const canonicalTargetId = targetUser._id.toString();
+    const currentUserId = currentUser._id.toString();
+    const isFollowing = currentUser.following.some((id) => id && id.toString() === canonicalTargetId);
     if (!isFollowing) {
       return res.status(404).json({ message: 'You do not follow this user' });
     }
 
-    currentUser.following = currentUser.following.filter((id) => id && id.toString() !== targetUserId);
+    currentUser.following = currentUser.following.filter((id) => id && id.toString() !== canonicalTargetId);
+    targetUser.followers = targetUser.followers.filter((id) => id && id.toString() !== currentUserId);
     currentUser.followingCount = currentUser.following.length;
-
-    targetUser.followers = targetUser.followers.filter((id) => id && id.toString() !== currentUserId.toString());
     targetUser.followersCount = targetUser.followers.length;
 
     await Promise.all([currentUser.save({ validateModifiedOnly: true }), targetUser.save({ validateModifiedOnly: true })]);
