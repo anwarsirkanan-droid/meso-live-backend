@@ -28,6 +28,7 @@ const themeRoutes = require('./routes/themeRoutes');
 const appSettingsRoutes = require('./routes/appSettingsRoutes');
 const faceVerificationRoutes = require('./routes/faceVerificationRoutes');
 const invitationRoutes = require('./routes/invitationRoutes');
+const globalSearchRoutes = require('./routes/globalSearchRoutes');
 const roomSocket = require('./sockets/roomSocket');
 const chatSocket = require('./sockets/chatSocket');
 const giftSocket = require('./sockets/giftSocket');
@@ -59,6 +60,7 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/search', globalSearchRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/wallet', walletRoutes);
