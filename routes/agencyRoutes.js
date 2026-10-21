@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const router = express.Router();
 const Agency = require('../models/Agency');
+const AgencyInvitation = require('../models/AgencyInvitation');
 const AgencyApplication = require('../models/AgencyApplication');
 const User = require('../models/User');
 const HostTarget = require('../models/HostTarget');
@@ -102,20 +103,109 @@ router.post('/create', auth, requireRole('AGENT'), async (req, res) => {
   }
 });
 
-router.post('/join', auth, requireRole('HOST'), async (req, res) => {
+router.post('/join', auth, async (req, res) => {
   try {
-    const agencyCode = typeof req.body?.agencyCode === 'string' ? req.body.agencyCode.trim().toUpperCase() : '';
-    if (!agencyCode) return res.status(400).json({ message: 'agencyCode is required.' });
-    const [agency, host] = await Promise.all([Agency.findOne({ agencyCode }), User.findById(req.user.id)]);
-    if (!agency) return res.status(404).json({ message: 'Agency not found for this agency code.' });
+    const agencyInput = typeof req.body?.agencyId === 'string' ? req.body.agencyId.trim() :
+      typeof req.body?.agencyCode === 'string' ? req.body.agencyCode.trim() : '';
+    if (!agencyInput) return res.status(400).json({ message: 'Agency ID or agency code is required.' });
+    const agencyQuery = mongoose.Types.ObjectId.isValid(agencyInput)
+      ? { $or: [{ agencyCode: agencyInput.toUpperCase() }, { _id: agencyInput }] }
+      : { agencyCode: agencyInput.toUpperCase() };
+    const [agency, host] = await Promise.all([Agency.findOne(agencyQuery), User.findById(req.user.id)]);
+    if (!agency) return res.status(404).json({ message: 'Agency not found.' });
     if (!host) return res.status(404).json({ message: 'User not found.' });
     if (host.agencyId) return res.status(409).json({ message: 'You already belong to an agency.' });
     host.agencyId = agency._id;
+    host.isHost = true;
+    if (!host.hostStartDate) host.hostStartDate = new Date();
+    if (host.role === 'USER') host.role = 'HOST';
     await host.save();
     await Agency.findByIdAndUpdate(agency._id, { $addToSet: { members: host._id }, $inc: { hostsCount: 1 } });
-    return res.json({ message: 'Successfully joined the agency.', agencyId: agency._id });
+    return res.json({ message: 'Successfully joined the agency.', agencyId: agency._id, user: { role: host.role, isHost: host.isHost, agencyId: host.agencyId, hostStartDate: host.hostStartDate } });
   } catch (error) {
     return res.status(500).json({ message: 'Could not join the agency.' });
+  }
+});
+
+router.get('/invitations/pending', auth, async (req, res) => {
+  try {
+    const invitations = await AgencyInvitation.find({ inviteeId: req.user.id, status: 'PENDING' })
+      .populate('agencyId', 'name agencyName agencyCode')
+      .populate('agentId', 'publicId username name avatar profilePicture')
+      .sort({ createdAt: -1 });
+    return res.json(invitations);
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not load agency invitations.' });
+  }
+});
+
+router.post('/invitations/accept', auth, async (req, res) => {
+  const invitationId = typeof req.body?.invitationId === 'string' ? req.body.invitationId.trim() : '';
+  if (!mongoose.Types.ObjectId.isValid(invitationId)) return res.status(400).json({ message: 'A valid invitation ID is required.' });
+  try {
+    const invitation = await AgencyInvitation.findOne({ _id: invitationId, inviteeId: req.user.id, status: 'PENDING' });
+    if (!invitation) return res.status(404).json({ message: 'Pending agency invitation not found.' });
+    const [user, agency] = await Promise.all([User.findById(req.user.id), Agency.findById(invitation.agencyId)]);
+    if (!user || !agency) return res.status(404).json({ message: 'User or agency not found.' });
+    if (user.agencyId && !user.agencyId.equals(agency._id)) return res.status(409).json({ message: 'You already belong to another agency.' });
+    user.agencyId = agency._id;
+    user.isHost = true;
+    if (!user.hostStartDate) user.hostStartDate = new Date();
+    if (user.role === 'USER') user.role = 'HOST';
+    await user.save();
+    invitation.status = 'ACCEPTED';
+    invitation.respondedAt = new Date();
+    await invitation.save();
+    await Agency.findByIdAndUpdate(agency._id, { $addToSet: { members: user._id }, $inc: { hostsCount: 1 } });
+    return res.json({ message: 'Agency invitation accepted.', user: { role: user.role, isHost: user.isHost, agencyId: user.agencyId, hostStartDate: user.hostStartDate } });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not accept the agency invitation.' });
+  }
+});
+
+router.post('/invitations/reject', auth, async (req, res) => {
+  const invitationId = typeof req.body?.invitationId === 'string' ? req.body.invitationId.trim() : '';
+  if (!mongoose.Types.ObjectId.isValid(invitationId)) return res.status(400).json({ message: 'A valid invitation ID is required.' });
+  try {
+    const invitation = await AgencyInvitation.findOneAndUpdate(
+      { _id: invitationId, inviteeId: req.user.id, status: 'PENDING' },
+      { $set: { status: 'REJECTED', respondedAt: new Date() } },
+      { new: true }
+    );
+    if (!invitation) return res.status(404).json({ message: 'Pending agency invitation not found.' });
+    return res.json({ message: 'Agency invitation declined.' });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not decline the agency invitation.' });
+  }
+});
+
+router.get('/invitations/search', auth, requireRole('AGENT'), async (req, res) => {
+  const publicId = String(req.query.publicId || '').trim();
+  if (!/^\d{6,10}$/.test(publicId)) return res.status(400).json({ message: 'A valid user public ID is required.' });
+  try {
+    const user = await User.findOne({ publicId: Number(publicId) }).select('publicId username name avatar profilePicture agencyId role isHost');
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+    return res.json({ user });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not search for the user.' });
+  }
+});
+
+router.post('/invitations', auth, requireRole('AGENT'), async (req, res) => {
+  const publicId = Number(req.body?.publicId);
+  if (!Number.isInteger(publicId)) return res.status(400).json({ message: 'A valid user public ID is required.' });
+  try {
+    const agent = await User.findById(req.user.id).select('agencyId');
+    if (!agent?.agencyId) return res.status(403).json({ message: 'You must belong to an agency before inviting hosts.' });
+    const invitee = await User.findOne({ publicId });
+    if (!invitee) return res.status(404).json({ message: 'User not found.' });
+    if (invitee._id.equals(agent._id)) return res.status(400).json({ message: 'You cannot invite yourself.' });
+    if (invitee.agencyId) return res.status(409).json({ message: 'This user already belongs to an agency.' });
+    const invitation = await AgencyInvitation.create({ agencyId: agent.agencyId, agentId: agent._id, inviteeId: invitee._id });
+    return res.status(201).json({ message: 'Host invitation sent.', invitation });
+  } catch (error) {
+    if (error.code === 11000) return res.status(409).json({ message: 'A pending invitation already exists for this user.' });
+    return res.status(500).json({ message: 'Could not send the host invitation.' });
   }
 });
 
