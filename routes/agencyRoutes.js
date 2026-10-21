@@ -209,6 +209,37 @@ router.post('/invitations', auth, requireRole('AGENT'), async (req, res) => {
   }
 });
 
+router.get('/search-user', auth, requireRole('AGENT'), async (req, res) => {
+  const publicId = String(req.query.publicId || '').trim();
+  if (!/^\d{6,10}$/.test(publicId)) return res.status(400).json({ message: 'A valid user public ID is required.' });
+  try {
+    const user = await User.findOne({ publicId: Number(publicId) })
+      .select('publicId username name avatar profilePicture agencyId role isHost');
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+    return res.json({ user });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not search for the user.' });
+  }
+});
+
+router.post('/invite', auth, requireRole('AGENT'), async (req, res) => {
+  const publicId = Number(req.body?.publicId);
+  if (!Number.isInteger(publicId)) return res.status(400).json({ message: 'A valid user public ID is required.' });
+  try {
+    const agent = await User.findById(req.user.id).select('agencyId');
+    if (!agent?.agencyId) return res.status(403).json({ message: 'You must belong to an agency before inviting hosts.' });
+    const invitee = await User.findOne({ publicId });
+    if (!invitee) return res.status(404).json({ message: 'User not found.' });
+    if (invitee._id.equals(agent._id)) return res.status(400).json({ message: 'You cannot invite yourself.' });
+    if (invitee.agencyId) return res.status(409).json({ message: 'This user already belongs to an agency.' });
+    const invitation = await AgencyInvitation.create({ agencyId: agent.agencyId, agentId: agent._id, inviteeId: invitee._id });
+    return res.status(201).json({ message: 'Host invitation sent.', invitation });
+  } catch (error) {
+    if (error.code === 11000) return res.status(409).json({ message: 'A pending invitation already exists for this user.' });
+    return res.status(500).json({ message: 'Could not send the host invitation.' });
+  }
+});
+
 router.get('/dashboard', auth, requireRole('AGENT'), async (req, res) => {
   try {
     const agency = await Agency.findOne({ ownerId: req.user.id });
