@@ -64,6 +64,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/withdraw', withdrawRoutes);
 app.use('/api/room', roomRoutes);
+app.use('/api/rooms', roomRoutes);
 app.use('/api/message', messageRoutes);
 app.use('/api/gift', giftRoutes);
 app.use('/api/game', gameRoutes);

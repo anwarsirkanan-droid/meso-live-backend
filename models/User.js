@@ -18,6 +18,8 @@ const userSchema = new mongoose.Schema({
     trim: true,
     required: [function isProfileComplete() { return this.profileComplete; }, 'Country is required']
   },
+  region: { type: String, trim: true, default: '' },
+  language: { type: String, trim: true, default: '' },
   gender: {
     type: String,
     enum: ['Male', 'Female', 'Other'],

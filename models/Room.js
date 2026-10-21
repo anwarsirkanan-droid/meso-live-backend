@@ -10,6 +10,8 @@ const roomSchema = new mongoose.Schema({
     enum: ['Follow', 'Party', 'For You', 'Ethiopia', 'Rank'], 
     default: 'For You' 
   },
+  region: { type: String, trim: true, default: '' },
+  language: { type: String, trim: true, default: '' },
   seats: [{
     seatIndex: { type: Number, required: true },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

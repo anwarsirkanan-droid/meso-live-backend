@@ -3,14 +3,77 @@ const mongoose = require('mongoose');
 const router = express.Router();
 const Room = require('../models/Room');
 const User = require('../models/User');
+const Follow = require('../models/Follow');
 const auth = require('../middleware/auth');
 
 const CATEGORIES = ['Follow', 'Party', 'For You', 'Ethiopia', 'Rank'];
 const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
 const roomPopulation = [
-  { path: 'ownerId', select: 'username avatar' },
+  { path: 'ownerId', select: 'username avatar country region language' },
   { path: 'seats.userId', select: 'username avatar charmPoints' }
 ];
+
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const normalizeTab = (tab) => String(tab || 'foryou').trim().toLowerCase().replace(/[ _-]/g, '');
+const serializeRoom = (room) => ({
+  _id: room._id,
+  host: room.ownerId ? {
+    _id: room.ownerId._id,
+    username: room.ownerId.username,
+    avatar: room.ownerId.avatar,
+    country: room.ownerId.country,
+    region: room.ownerId.region,
+    language: room.ownerId.language,
+  } : null,
+  title: room.title,
+  cover: room.coverPhoto || room.banner,
+  category: room.category,
+  region: room.region || room.ownerId?.region || room.ownerId?.country || '',
+  language: room.language || room.ownerId?.language || '',
+  membersCount: room.currentListenersCount,
+  isLive: room.isLive,
+});
+
+async function getFilteredRooms(req, res) {
+  try {
+    const tab = normalizeTab(req.query.tab);
+    const region = typeof req.query.region === 'string' ? req.query.region.trim() : '';
+    const language = typeof req.query.language === 'string' ? req.query.language.trim() : '';
+    if (!['follow', 'foryou', 'party'].includes(tab)) {
+      return res.status(400).json({ message: 'tab must be follow, foryou, or party' });
+    }
+
+    const filter = { isLive: true };
+    let sort = { currentListenersCount: -1, updatedAt: -1 };
+    if (tab === 'follow') {
+      const follows = await Follow.find({ followerId: req.user.id }).select('followingId').lean();
+      filter.ownerId = { $in: follows.map(({ followingId }) => followingId) };
+    } else if (tab === 'party') {
+      filter.category = 'Party';
+    }
+
+    if (region) {
+      const regionExpression = new RegExp(`^${escapeRegex(region)}$`, 'i');
+      const regionalHosts = await User.find({
+        $or: [{ region: regionExpression }, { country: regionExpression }]
+      }).select('_id').lean();
+      const regionalOwnerIds = regionalHosts.map(({ _id }) => _id);
+      filter.$or = [
+        { region: regionExpression },
+        ...(regionalOwnerIds.length ? [{ ownerId: { $in: regionalOwnerIds } }] : []),
+      ];
+    }
+    if (language) filter.language = new RegExp(`^${escapeRegex(language)}$`, 'i');
+
+    const rooms = await Room.find(filter)
+      .populate(roomPopulation)
+      .sort(sort)
+      .limit(100);
+    return res.json(rooms.filter((room) => room.ownerId).map(serializeRoom));
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+}
 
 const isOwnerOrAdmin = async (req, res, next) => {
   try {
@@ -93,14 +156,7 @@ router.get('/category/:category', async (req, res) => {
   }
 });
 
-router.get('/', async (req, res) => {
-  try {
-    const rooms = await Room.find().populate(roomPopulation).sort({ createdAt: -1 }).limit(100);
-    res.json(rooms);
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-});
+router.get('/', auth, getFilteredRooms);
 
 router.get('/all', async (req, res) => {
   try {
@@ -111,19 +167,7 @@ router.get('/all', async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(100);
     const activeRooms = rooms.filter((room) => room.ownerId);
-    res.json(activeRooms.map((room) => ({
-      _id: room._id,
-      host: {
-        _id: room.ownerId._id,
-        username: room.ownerId.username,
-        avatar: room.ownerId.avatar
-      },
-      title: room.title,
-      cover: room.coverPhoto || room.banner,
-      category: room.category,
-      membersCount: room.currentListenersCount,
-      isLive: room.isLive
-    })));
+    res.json(activeRooms.map(serializeRoom));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -131,7 +175,7 @@ router.get('/all', async (req, res) => {
 
 router.post('/create', auth, async (req, res) => {
   try {
-    const { title, banner = '', coverPhoto = banner, announcement = '', category = 'For You' } = req.body;
+    const { title, banner = '', coverPhoto = banner, announcement = '', category = 'For You', region = '', language = '' } = req.body;
     if (typeof title !== 'string' || !title.trim() || title.trim().length > 100) {
       return res.status(400).json({ message: 'Room title is required and must be at most 100 characters.' });
     }
@@ -150,6 +194,8 @@ router.post('/create', auth, async (req, res) => {
       banner,
       announcement,
       category,
+      region: typeof region === 'string' ? region.trim() : '',
+      language: typeof language === 'string' ? language.trim() : '',
       seats
     });
     res.status(201).json({ message: 'Room created successfully', room });
