@@ -35,6 +35,9 @@ const serializeRoom = (room) => ({
 });
 
 async function getFilteredRooms(req, res) {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
   try {
     const tab = normalizeTab(req.query.tab);
     const region = typeof req.query.region === 'string' ? req.query.region.trim() : '';
@@ -179,7 +182,28 @@ router.get('/category/:category', async (req, res) => {
 
 router.get('/', auth, getFilteredRooms);
 
+async function getActiveRooms(req, res) {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  try {
+    const rooms = await Room.find({ isLive: true })
+      .populate(roomPopulation)
+      .sort({ updatedAt: -1 })
+      .limit(100);
+    return res.json(rooms.filter((room) => room.ownerId).map(serializeRoom));
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+}
+
+router.get('/active', getActiveRooms);
+router.get('/live', getActiveRooms);
+
 router.get('/all', async (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
   try {
     const rooms = await Room.find({
       $or: [{ isLive: true }, { isLive: { $exists: false } }]

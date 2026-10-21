@@ -113,6 +113,8 @@ module.exports = (io, socket) => {
       if (isHost) {
         startHostTaskTracking(roomId);
         io.emit('room-status-changed', { roomId, isLive: true });
+        io.emit('room_list_updated', { roomId, isLive: true });
+        io.emit('room_started', { roomId, isLive: true });
       }
       return { roomId };
     } catch (error) {
@@ -201,6 +203,7 @@ module.exports = (io, socket) => {
     io.to(roomId).emit('user-left', { socketId: socket.id, userId });
     if (isHost) {
       io.emit('room-status-changed', { roomId, isLive: false });
+      io.emit('room_list_updated', { roomId, isLive: false });
     }
   };
 

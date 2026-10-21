@@ -179,10 +179,14 @@ test('host leave and disconnect mark the room offline and broadcast room status'
   assert.equal(room.currentListenersCount, 0);
   assert.deepEqual(globalEvents.map(({ event, payload }) => [event, payload.isLive]), [
     ['room-status-changed', true],
+    ['room_list_updated', true],
+    ['room_started', true],
     ['room-status-changed', false],
+    ['room_list_updated', false],
   ]);
   assert.ok(roomEvents.some(({ event }) => event === 'room_updated'));
 
+  const globalEventCount = globalEvents.length;
   room = { ...room, currentListenersCount: 1, isLive: true };
   const listener = createSocket('507f1f77bcf86cd799439013');
   roomSocket(io, listener);
@@ -190,7 +194,7 @@ test('host leave and disconnect mark the room offline and broadcast room status'
   await listener.handlers.get('leave-room')({ roomId });
   assert.equal(room.isLive, true);
   assert.equal(room.currentListenersCount, 1);
-  assert.equal(globalEvents.length, 2);
+  assert.equal(globalEvents.length, globalEventCount);
 
   room = { ...room, currentListenersCount: 0, isLive: false };
   const disconnectedHost = createSocket(hostId);
@@ -201,8 +205,11 @@ test('host leave and disconnect mark the room offline and broadcast room status'
 
   assert.equal(room.isLive, false);
   assert.equal(room.currentListenersCount, 0);
-  assert.deepEqual(globalEvents.at(-1), {
+  assert.deepEqual(globalEvents.slice(-2), [{
     event: 'room-status-changed',
     payload: { roomId, isLive: false },
-  });
+  }, {
+    event: 'room_list_updated',
+    payload: { roomId, isLive: false },
+  }]);
 });
