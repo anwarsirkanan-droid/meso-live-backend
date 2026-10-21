@@ -26,6 +26,27 @@ const getProfile = async (req, res) => {
 router.get('/me', auth, getProfile);
 router.get('/profile', auth, getProfile);
 
+router.get('/search', auth, async (req, res) => {
+  const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  if (!query) return res.json([]);
+  if (query.length > 80) return res.status(400).json({ message: 'Search query is too long.' });
+
+  try {
+    const expression = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const numericId = Number(query);
+    const users = await User.find({
+      $or: [
+        { username: expression },
+        { name: expression },
+        ...(Number.isInteger(numericId) ? [{ publicId: numericId }, { customId: query }] : []),
+      ],
+    }).select('publicId username name avatar profilePicture country isOnline lastSeen role').limit(50).lean();
+    return res.json(users);
+  } catch (err) {
+    return res.status(500).json({ message: 'Could not search users.' });
+  }
+});
+
 router.get('/:userId/profile', auth, async (req, res) => {
   try {
     const user = await resolveUser(req.params.userId);

@@ -39,11 +39,13 @@ async function getFilteredRooms(req, res) {
     const tab = normalizeTab(req.query.tab);
     const region = typeof req.query.region === 'string' ? req.query.region.trim() : '';
     const language = typeof req.query.language === 'string' ? req.query.language.trim() : '';
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
     if (!['follow', 'foryou', 'party'].includes(tab)) {
       return res.status(400).json({ message: 'tab must be follow, foryou, or party' });
     }
 
     const filter = { isLive: true };
+    const andFilters = [];
     let sort = { currentListenersCount: -1, updatedAt: -1 };
     if (tab === 'follow') {
       const follows = await Follow.find({ followerId: req.user.id }).select('followingId').lean();
@@ -58,12 +60,31 @@ async function getFilteredRooms(req, res) {
         $or: [{ region: regionExpression }, { country: regionExpression }]
       }).select('_id').lean();
       const regionalOwnerIds = regionalHosts.map(({ _id }) => _id);
-      filter.$or = [
+      andFilters.push({ $or: [
         { region: regionExpression },
         ...(regionalOwnerIds.length ? [{ ownerId: { $in: regionalOwnerIds } }] : []),
-      ];
+      ] });
     }
     if (language) filter.language = new RegExp(`^${escapeRegex(language)}$`, 'i');
+
+    if (search) {
+      const searchExpression = new RegExp(escapeRegex(search), 'i');
+      const matchingUsers = await User.find({
+        $or: [
+          { username: searchExpression },
+          { name: searchExpression },
+          ...(Number.isInteger(Number(search)) ? [{ publicId: Number(search) }, { customId: search }] : []),
+        ],
+      }).select('_id').lean();
+      const searchConditions = [
+        { title: searchExpression },
+        ...(matchingUsers.length ? [{ ownerId: { $in: matchingUsers.map(({ _id }) => _id) } }] : []),
+      ];
+      if (isValidId(search)) searchConditions.push({ _id: search });
+      andFilters.push({ $or: searchConditions });
+    }
+
+    if (andFilters.length) filter.$and = andFilters;
 
     const rooms = await Room.find(filter)
       .populate(roomPopulation)
