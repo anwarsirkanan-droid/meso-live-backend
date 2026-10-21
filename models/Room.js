@@ -19,7 +19,7 @@ const roomSchema = new mongoose.Schema({
   }],
   bannedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   currentListenersCount: { type: Number, default: 0 },
-  isLive: { type: Boolean, default: true },
+  isLive: { type: Boolean, default: false },
   banner: { type: String, default: '' },
   notice: { type: String, default: '' }
 }, { timestamps: true });

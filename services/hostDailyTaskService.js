@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const HostDailyProgress = require('../models/HostDailyProgress');
+const HostReward = require('../models/HostReward');
 const Transaction = require('../models/Transaction');
 const User = require('../models/User');
 const {
@@ -47,6 +48,29 @@ async function recordHostTime(userId, startTime, endTime, crownMicActive) {
         { $inc: increment, $setOnInsert: { userId, date } },
         { upsert: true },
       );
+      const hostReward = await HostReward.findOne({ userId });
+      const now = new Date();
+      if (!hostReward) {
+        await HostReward.create({
+          userId,
+          micSeconds: seconds,
+          crownSeconds: crownMicActive ? seconds : 0,
+          lastResetDate: now,
+        });
+      } else {
+        const sameUtcDay = hostReward.lastResetDate &&
+          hostReward.lastResetDate.toISOString().slice(0, 10) === now.toISOString().slice(0, 10);
+        if (!sameUtcDay) {
+          hostReward.micSeconds = 0;
+          hostReward.crownSeconds = 0;
+          hostReward.micClaimed = false;
+          hostReward.crownClaimed = false;
+        }
+        hostReward.micSeconds += seconds;
+        if (crownMicActive) hostReward.crownSeconds += seconds;
+        hostReward.lastResetDate = now;
+        await hostReward.save();
+      }
     }
     cursor = segmentEnd;
   }
