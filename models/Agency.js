@@ -11,7 +11,7 @@ const agencySchema = new mongoose.Schema({
   tier: {
     type: String,
     enum: AGENCY_TIERS.map(({ tier }) => tier),
-    default: 'D'
+    default: 'E'
   },
   commissionRate: {
     type: Number,

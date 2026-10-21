@@ -7,6 +7,7 @@ const Room = require('../models/Room');
 const Transaction = require('../models/Transaction');
 const auth = require('../middleware/auth');
 const { calculateLuckyGiftMultiplier, processGiftDistribution } = require('../services/giftService');
+const { updateTeamIncome } = require('../services/commissionService');
 
 router.get('/catalog', auth, async (req, res) => {
   try {
@@ -41,7 +42,7 @@ router.post('/send', auth, async (req, res) => {
   try {
     session = await mongoose.startSession();
     const [receiver, gift, room] = await Promise.all([
-      User.findById(receiverId).select('_id username'),
+      User.findById(receiverId).select('_id username agencyId'),
       Gift.findById(giftId),
       roomId ? Room.findById(roomId) : null
     ]);
@@ -108,6 +109,12 @@ router.post('/send', auth, async (req, res) => {
         }
       ], { session });
     });
+
+    if (receiver.agencyId) {
+      updateTeamIncome(receiver.agencyId, totalCost).catch((error) => {
+        console.error('Could not update agency team income after gift:', error);
+      });
+    }
 
     const io = req.app.get('io');
     if (roomId && io) {

@@ -3,6 +3,7 @@ const Agency = require('../models/Agency');
 const Transaction = require('../models/Transaction');
 const User = require('../models/User');
 const { AGENCY_TIERS, AGENCY_TIME_ZONE } = require('../config/commission');
+const { checkSPlus, getLevel } = require('./commissionService');
 
 function getDayStartInAgencyTimeZone(date = new Date()) {
   const shifted = new Date(date.getTime() + 8 * 60 * 60 * 1000);
@@ -64,8 +65,10 @@ async function getAgencyCenter(agency) {
     getRevenueForUsers(subHostIds, todayStart),
     getRevenueForUsers(subHostIds, thirtyDaysAgo),
   ]);
-  const nextTier = getNextTier(agency.tier);
   const thirtyDayTeamRevenue = thirtyDayGiftRevenue + thirtyDaySubRevenue;
+  const calculatedTier = getLevel(thirtyDayTeamRevenue);
+  const sPlus = checkSPlus(agency.sLevelInvitesCount || 0);
+  const nextTier = getNextTier(calculatedTier.tier);
 
   return {
     agency: {
@@ -73,21 +76,22 @@ async function getAgencyCenter(agency) {
       name: agency.name,
       ownerId: agency.ownerId,
       parentAgentId: agency.parentAgentId || agency.invitedByAgencyId,
-      tier: agency.tier,
+      tier: calculatedTier.tier,
       timeZone: 'GMT+8',
       timeZoneId: AGENCY_TIME_ZONE,
     },
     yesterdayTotalCommission: agency.yesterdayCommission || 0,
     commission: {
-      tier: agency.tier,
-      rate: agency.commissionRate,
+      tier: calculatedTier.tier,
+      rate: sPlus ? 0.18 : calculatedTier.rate,
       rules: AGENCY_TIERS,
-      protectionBonus: agency.protectionBonus || 0,
+      protectionBonus: sPlus ? 0.01 : agency.protectionBonus || 0,
+      sPlus,
     },
     giftRevenue: {
       last30Days: thirtyDayTeamRevenue,
       today: todayGiftRevenue + todaySubRevenue,
-      nextTier: nextTier ? {
+    nextTier: nextTier ? {
         tier: nextTier.tier,
         minimumTeamIncome: nextTier.minimumTeamIncome,
         remaining: nextTier.minimumTeamIncome === null
