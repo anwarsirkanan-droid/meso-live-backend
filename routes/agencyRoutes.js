@@ -83,6 +83,18 @@ function requireRole(role) {
   };
 }
 
+async function requireApprovedAgent(req, res, next) {
+  try {
+    const user = await User.findById(req.user.id).select('role isAgent');
+    if (!user || (user.isAgent !== true && user.role !== 'AGENT')) {
+      return res.status(403).json({ message: 'Access restricted to approved Agents only' });
+    }
+    return next();
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not verify Agency Center access.' });
+  }
+}
+
 router.post('/create', auth, requireRole('AGENT'), async (req, res) => {
   try {
     const agencyName = typeof req.body?.agencyName === 'string' ? req.body.agencyName.trim() : '';
@@ -393,7 +405,7 @@ router.post('/commission/calculate', auth, requireRole('AGENT'), async (req, res
   }
 });
 
-router.get('/center', auth, async (req, res) => {
+router.get('/center', auth, requireApprovedAgent, async (req, res) => {
   try {
     const agency = await getUserAgency(req.user.id);
     if (!agency) return res.status(404).json({ message: 'You are not a member of an agency.' });
@@ -407,7 +419,7 @@ router.get('/center', auth, async (req, res) => {
   }
 });
 
-router.get('/commission', auth, async (req, res) => {
+router.get('/commission', auth, requireApprovedAgent, async (req, res) => {
   try {
     const agency = await getUserAgency(req.user.id);
     if (!agency) return res.status(404).json({ message: 'You are not a member of an agency.' });
@@ -445,7 +457,7 @@ router.get('/host-revenue', auth, async (req, res) => {
   }
 });
 
-router.get('/sub-revenue', auth, async (req, res) => {
+router.get('/sub-revenue', auth, requireApprovedAgent, async (req, res) => {
   const period = req.query.period || '30d';
   if (!['today', '30d'].includes(period)) {
     return res.status(400).json({ message: 'period must be today or 30d.' });
