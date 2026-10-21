@@ -1,7 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
+const Room = require('../models/Room');
 const auth = require('../middleware/auth');
+const mongoose = require('mongoose');
+
+const publicUserFields = '-password -googleId';
+const resolveUser = (userId) => {
+  if (mongoose.Types.ObjectId.isValid(userId)) return User.findById(userId).select(publicUserFields);
+  const publicId = Number(userId);
+  return Number.isInteger(publicId) ? User.findOne({ publicId }).select(publicUserFields) : null;
+};
 
 const getProfile = async (req, res) => {
   try {
@@ -16,6 +25,32 @@ const getProfile = async (req, res) => {
 
 router.get('/me', auth, getProfile);
 router.get('/profile', auth, getProfile);
+
+router.get('/:userId/profile', auth, async (req, res) => {
+  try {
+    const user = await resolveUser(req.params.userId);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    const activeRoom = await Room.findOne({ ownerId: user._id, isLive: true })
+      .sort({ updatedAt: -1 })
+      .select('_id title coverPhoto banner');
+    const lastSeenAt = user.lastSeen ? new Date(user.lastSeen).getTime() : 0;
+    const isOnline = user.isOnline === true || (lastSeenAt > Date.now() - 5 * 60 * 1000);
+    const status = activeRoom ? 'LIVE' : isOnline ? 'ONLINE' : 'OFFLINE';
+    const profile = user.toJSON();
+    delete profile.password;
+    return res.json({
+      ...profile,
+      isOnline,
+      status,
+      roomId: activeRoom?._id || null,
+      roomName: activeRoom?.title || '',
+      roomAvatar: activeRoom?.coverPhoto || activeRoom?.banner || profile.avatar || profile.profilePicture || '',
+    });
+  } catch (err) {
+    return res.status(500).json({ message: 'Could not load this profile.' });
+  }
+});
 
 router.get('/username-availability', auth, async (req, res) => {
   const username = typeof req.query.username === 'string' ? req.query.username.trim() : '';
@@ -33,7 +68,7 @@ router.get('/username-availability', auth, async (req, res) => {
 });
 
 router.put('/profile', auth, async (req, res) => {
-  const { username, phoneNumber, country, gender, bio, profilePicture } = req.body || {};
+  const { username, phoneNumber, country, gender, bio, profilePicture, cover, birthday, album } = req.body || {};
   const requiredFields = { username, phoneNumber, country, gender };
   if (Object.values(requiredFields).some((value) => typeof value !== 'string' || !value.trim())) {
     return res.status(400).json({ message: 'Username, phone number, country, and gender are required.' });
@@ -49,6 +84,15 @@ router.put('/profile', auth, async (req, res) => {
   }
   if (profilePicture !== undefined && typeof profilePicture !== 'string') {
     return res.status(400).json({ message: 'Profile picture must be a valid image value.' });
+  }
+  if (cover !== undefined && typeof cover !== 'string') {
+    return res.status(400).json({ message: 'Cover image must be a valid image value.' });
+  }
+  if (birthday !== undefined && birthday !== '' && Number.isNaN(Date.parse(birthday))) {
+    return res.status(400).json({ message: 'Birthday must be a valid date.' });
+  }
+  if (album !== undefined && (!Array.isArray(album) || album.length > 6 || album.some((image) => typeof image !== 'string'))) {
+    return res.status(400).json({ message: 'Album must contain up to 6 image values.' });
   }
 
   try {
@@ -69,6 +113,9 @@ router.put('/profile', auth, async (req, res) => {
     user.bio = typeof bio === 'string' ? bio.trim() : '';
     user.profilePicture = profilePicture ?? user.profilePicture ?? user.avatar ?? '';
     user.avatar = user.profilePicture;
+    if (cover !== undefined) user.cover = cover;
+    if (birthday !== undefined) user.birthday = birthday || null;
+    if (album !== undefined) user.album = album;
     user.profileComplete = true;
     await user.save({ validateModifiedOnly: true });
 

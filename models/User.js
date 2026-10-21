@@ -39,6 +39,8 @@ const userSchema = new mongoose.Schema({
   },
   profileComplete: { type: Boolean, default: false },
   cover: { type: String, default: '' },
+  birthday: { type: Date, default: null },
+  album: { type: [String], default: [] },
   bio: { type: String, default: '' },
   coins: { type: Number, default: 0 },
   diamonds: { type: Number, default: 0 },
