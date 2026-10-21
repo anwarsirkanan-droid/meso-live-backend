@@ -15,11 +15,12 @@ test('agent applications require proof only for admin review and retain pending 
     currentAgencyId: agencyId,
     agencyName: 'Agent Review Agency',
     phoneNumber: '123456789',
-    experience: 'Experienced agent',
+    description: 'Agency proposal for the current Agent',
     approvalType: 'AGENT',
   });
   await agentReview.validate();
   assert.equal(agentReview.status, 'PENDING');
+  assert.equal(agentReview.experience, '');
 
   const adminReview = new AgencyAgentApplication({
     applicantId,

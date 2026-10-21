@@ -200,25 +200,29 @@ function agencyLookupForInput(value) {
 
 router.post('/apply', auth, parseAgentProof, async (req, res) => {
   const agencyName = typeof req.body?.agencyName === 'string' ? req.body.agencyName.trim() : '';
+  const description = typeof req.body?.description === 'string' ? req.body.description.trim() : '';
   const experience = typeof req.body?.experience === 'string' ? req.body.experience.trim() : '';
   if (agencyName) {
     const phoneNumber = typeof req.body?.phoneNumber === 'string' ? req.body.phoneNumber.trim() : '';
     if (agencyName.length > 100) return res.status(400).json({ message: 'Agency name must be at most 100 characters.' });
     if (phoneNumber.length < 7 || phoneNumber.length > 40) return res.status(400).json({ message: 'A valid phone number or contact is required.' });
-    if (!experience || experience.length > 2000) return res.status(400).json({ message: 'Experience description is required and must be at most 2000 characters.' });
 
     try {
       const applicant = await User.findById(req.user.id).select('role isHost isAgent agencyId');
       if (!applicant) return res.status(404).json({ message: 'Applicant not found.' });
       if (applicant.role === 'AGENT' || applicant.isAgent) return res.status(409).json({ message: 'You are already an Agent.' });
 
-      const isExistingHost = Boolean(applicant.agencyId) &&
-        (applicant.role === 'HOST' || applicant.isHost);
+      const isExistingHost = Boolean(applicant.agencyId);
+      const applicationDescription = isExistingHost ? description : experience;
+      if (!applicationDescription || applicationDescription.length > 2000) {
+        return res.status(400).json({
+          message: isExistingHost
+            ? 'Agency description is required and must be at most 2000 characters.'
+            : 'Experience description is required and must be at most 2000 characters.',
+        });
+      }
       if (!isExistingHost && !req.file) {
         return res.status(400).json({ message: 'Attach a screenshot proving your Agent experience.' });
-      }
-      if (!isExistingHost && applicant.agencyId) {
-        return res.status(409).json({ message: 'You must leave your current agency before applying as a new Agent.' });
       }
 
       const agencyNameExists = await Agency.exists({
@@ -239,7 +243,8 @@ router.post('/apply', auth, parseAgentProof, async (req, res) => {
         currentAgencyId: isExistingHost ? applicant.agencyId : null,
         agencyName,
         phoneNumber,
-        experience,
+        description: applicationDescription,
+        experience: isExistingHost ? '' : experience,
         approvalType: isExistingHost ? 'AGENT' : 'ADMIN',
         ...(req.file ? { proofImage: req.file.buffer, proofMimeType: req.file.mimetype } : {}),
       });

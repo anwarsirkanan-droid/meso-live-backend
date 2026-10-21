@@ -5,7 +5,8 @@ const agencyAgentApplicationSchema = new mongoose.Schema({
   currentAgencyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Agency', default: null },
   agencyName: { type: String, required: true, trim: true, maxlength: 100 },
   phoneNumber: { type: String, required: true, trim: true, maxlength: 40 },
-  experience: { type: String, required: true, trim: true, maxlength: 2000 },
+  description: { type: String, default: '', trim: true, maxlength: 2000 },
+  experience: { type: String, default: '', trim: true, maxlength: 2000 },
   approvalType: { type: String, enum: ['AGENT', 'ADMIN'], required: true },
   proofImage: {
     type: Buffer,
