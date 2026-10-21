@@ -6,6 +6,7 @@ const { OAuth2Client } = require('google-auth-library');
 const router = express.Router();
 
 const User = require('../models/User');
+const { withProfileMetadata } = require('../services/profileMetadata');
 const auth = require('../middleware/auth');
 const { JWT_SECRET } = require('../middleware/authMiddleware');
 const { calculateCharmLevel, calculateWealthLevel } = require('../config/levels');
@@ -87,11 +88,11 @@ router.get('/me', auth, async (req, res) => {
   }
 
   try {
-    const user = await User.findById(req.user.id).select('-password');
+    const user = await User.findById(req.user.id).select('-password').populate('agencyId', 'name');
     if (!user) return res.status(404).json({ error: 'User not found.' });
     if (user.publicId == null) await user.save({ validateModifiedOnly: true });
 
-    const profile = typeof user.toObject === 'function' ? user.toObject() : { ...user };
+    const profile = withProfileMetadata(user);
     delete profile.password;
     profile.id = profile.id || profile._id;
     profile.profileComplete = profile.profileComplete === true;

@@ -4,20 +4,22 @@ const User = require('../models/User');
 const Room = require('../models/Room');
 const auth = require('../middleware/auth');
 const mongoose = require('mongoose');
+const { withProfileMetadata } = require('../services/profileMetadata');
 
 const publicUserFields = '-password -googleId';
 const resolveUser = (userId) => {
-  if (mongoose.Types.ObjectId.isValid(userId)) return User.findById(userId).select(publicUserFields);
-  const publicId = Number(userId);
-  return Number.isInteger(publicId) ? User.findOne({ publicId }).select(publicUserFields) : null;
+  const query = mongoose.Types.ObjectId.isValid(userId)
+    ? User.findById(userId)
+    : Number.isInteger(Number(userId)) ? User.findOne({ publicId: Number(userId) }) : null;
+  return query?.select(publicUserFields).populate('agencyId', 'name');
 };
 
 const getProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('-password');
+    const user = await User.findById(req.user.id).select('-password').populate('agencyId', 'name');
     if (!user) return res.status(404).json({ message: 'User not found' });
     if (user.publicId == null) await user.save({ validateModifiedOnly: true });
-    return res.json(user);
+    return res.json(withProfileMetadata(user));
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
@@ -58,7 +60,7 @@ router.get('/:userId/profile', auth, async (req, res) => {
     const lastSeenAt = user.lastSeen ? new Date(user.lastSeen).getTime() : 0;
     const isOnline = user.isOnline === true || (lastSeenAt > Date.now() - 5 * 60 * 1000);
     const status = activeRoom ? 'LIVE' : isOnline ? 'ONLINE' : 'OFFLINE';
-    const profile = user.toJSON();
+    const profile = withProfileMetadata(user);
     delete profile.password;
     return res.json({
       ...profile,
@@ -180,7 +182,7 @@ router.put('/account', auth, async (req, res) => {
     }
     if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
     await user.save({ validateModifiedOnly: true });
-    const profile = user.toJSON();
+    const profile = withProfileMetadata(user);
     delete profile.password;
     return res.json({ message: 'Account details updated successfully.', user: profile });
   } catch (error) {
