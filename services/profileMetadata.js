@@ -49,6 +49,7 @@ function withProfileMetadata(profile) {
       ? value.agencyId.agencyName || value.agencyId.name
       : ''
   ) || value.agencyName || '';
+  value.agencyStatus = value.agencyId ? 'APPROVED' : 'NONE';
   value.customId = value.customId || value.publicId || value.id || value._id;
   return value;
 }
