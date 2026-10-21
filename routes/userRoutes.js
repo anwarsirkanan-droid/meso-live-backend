@@ -44,6 +44,7 @@ router.get('/:userId/profile', auth, async (req, res) => {
       isOnline,
       status,
       roomId: activeRoom?._id || null,
+      roomTitle: activeRoom?.title || '',
       roomName: activeRoom?.title || '',
       roomAvatar: activeRoom?.coverPhoto || activeRoom?.banner || profile.avatar || profile.profilePicture || '',
     });
