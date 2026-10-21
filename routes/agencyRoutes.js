@@ -108,10 +108,16 @@ router.post('/join', auth, async (req, res) => {
     const agencyInput = typeof req.body?.agencyId === 'string' ? req.body.agencyId.trim() :
       typeof req.body?.agencyCode === 'string' ? req.body.agencyCode.trim() : '';
     if (!agencyInput) return res.status(400).json({ message: 'Agency ID or agency code is required.' });
-    const agencyQuery = mongoose.Types.ObjectId.isValid(agencyInput)
-      ? { $or: [{ agencyCode: agencyInput.toUpperCase() }, { _id: agencyInput }] }
-      : { agencyCode: agencyInput.toUpperCase() };
-    const [agency, host] = await Promise.all([Agency.findOne(agencyQuery), User.findById(req.user.id)]);
+    const agencyLookup = [{ agencyCode: agencyInput.toUpperCase() }, { code: agencyInput }];
+    if (mongoose.Types.ObjectId.isValid(agencyInput)) agencyLookup.push({ _id: agencyInput });
+    if (/^\d+$/.test(agencyInput)) {
+      const owner = await User.findOne({ publicId: Number(agencyInput) }).select('_id');
+      if (owner) agencyLookup.push({ ownerId: owner._id });
+    }
+    const [agency, host] = await Promise.all([
+      Agency.findOne({ $or: agencyLookup }),
+      User.findById(req.user.id)
+    ]);
     if (!agency) return res.status(404).json({ message: 'Agency not found.' });
     if (!host) return res.status(404).json({ message: 'User not found.' });
     if (host.agencyId) return res.status(409).json({ message: 'You already belong to an agency.' });
