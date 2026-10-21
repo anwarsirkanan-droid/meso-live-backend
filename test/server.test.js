@@ -206,6 +206,7 @@ test('GET /api/users/me and /api/users/:id return profile details and linked age
     assert.equal(body.gender, 'Female');
     assert.equal(body.country, 'Ethiopia');
     assert.equal(body.agencyName, 'Primary Agency');
+    assert.equal(body.agencyId._id, '507f1f77bcf86cd799439013');
     assert.equal(body.wealthLevel, 3);
     assert.equal(body.charmLevel, 4);
   }
