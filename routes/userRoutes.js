@@ -29,7 +29,8 @@ router.get('/me', auth, getProfile);
 router.get('/profile', auth, getProfile);
 
 router.get('/search', auth, async (req, res) => {
-  const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const rawQuery = typeof req.query.q === 'string' ? req.query.q : req.query.id;
+  const query = typeof rawQuery === 'string' ? rawQuery.trim() : '';
   if (!query) return res.json([]);
   if (query.length > 80) return res.status(400).json({ message: 'Search query is too long.' });
 

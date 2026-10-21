@@ -20,14 +20,15 @@ router.get('/', auth, async (req, res) => {
     const numericMatch = Number.isInteger(numericId) ? [{ publicId: numericId }, { customId: query }] : [];
     const objectIdMatch = isObjectId(query) ? [{ _id: query }] : [];
 
-    const [users, agencies, rooms] = await Promise.all([
-      User.find({
-        $or: [{ username: expression }, { name: expression }, ...numericMatch, ...objectIdMatch],
+    const users = await User.find({
+        $or: [{ username: expression }, { name: expression }, { nickname: expression }, ...numericMatch, ...objectIdMatch],
       })
         .populate('agencyId', 'name agencyName agencyCode')
-        .select('publicId username name avatar profilePicture agencyId role isHost')
+        .select('publicId customId username nickname name avatar profilePicture agencyId role isHost')
         .limit(25)
-        .lean(),
+        .lean();
+    const matchedUserIds = users.map((user) => user._id);
+    const [agencies, rooms] = await Promise.all([
       Agency.find({
         $or: [
           { agencyCode: expression },
@@ -38,7 +39,7 @@ router.get('/', auth, async (req, res) => {
       }).select('_id name agencyName agencyCode tier').limit(25).lean(),
       Room.find({
         isLive: true,
-        $or: [{ title: expression }, ...objectIdMatch],
+        $or: [{ title: expression }, ...objectIdMatch, ...(matchedUserIds.length ? [{ ownerId: { $in: matchedUserIds } }] : [])],
       })
         .populate('ownerId', 'publicId username name avatar profilePicture agencyId isHost role')
         .sort({ currentListenersCount: -1, updatedAt: -1 })
@@ -46,17 +47,19 @@ router.get('/', auth, async (req, res) => {
         .lean(),
     ]);
 
+    const liveRoomByOwner = new Map(rooms.filter((room) => room.ownerId).map((room) => [String(room.ownerId._id), room]));
     return res.json({
       users: users.map((user) => ({
         id: user._id,
         userId: user.publicId || user._id,
         customId: user.customId || user.publicId || user._id,
-        nickname: user.name || user.username,
+        nickname: user.nickname || user.name || user.username,
         username: user.username,
         avatar: user.avatar || user.profilePicture || '',
         agencyName: user.agencyId?.agencyName || user.agencyId?.name || '',
         isHost: user.isHost === true || user.role === 'HOST',
         role: user.role,
+        roomId: liveRoomByOwner.get(String(user._id))?._id || null,
       })),
       agencies: agencies.map((agency) => ({
         id: agency._id,
