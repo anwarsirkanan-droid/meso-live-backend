@@ -11,10 +11,14 @@ const isValidObjectId = (value) =>
 
 router.post('/follow', verifyToken, async (req, res) => {
   const { userId } = req.body || {};
-  if (!isValidObjectId(userId)) {
+  const targetObjectId = userId && String(userId).trim();
+
+  if (!isValidObjectId(targetObjectId)) {
     return res.status(400).json({ message: 'A valid userId is required' });
   }
-  if (new mongoose.Types.ObjectId(userId).equals(req.user.id)) {
+
+  const currentUserId = req.user.id;
+  if (new mongoose.Types.ObjectId(targetObjectId).equals(currentUserId)) {
     return res.status(400).json({ message: 'You cannot follow yourself' });
   }
 
@@ -23,48 +27,52 @@ router.post('/follow', verifyToken, async (req, res) => {
     session = await mongoose.startSession();
     let follower;
     let notification;
+    let alreadyFollowing = false;
+
     await session.withTransaction(async () => {
-      const following = await User.findById(userId).select('_id username');
-      if (!following) {
+      const targetUser = await User.findById(targetObjectId).select('_id username followers following');
+      if (!targetUser) {
         const error = new Error('User not found');
         error.status = 404;
         throw error;
       }
 
-      await Follow.create([{
-        followerId: req.user.id,
-        followingId: userId
-      }], { session });
-
-      follower = await User.findByIdAndUpdate(
-        req.user.id,
-        { $inc: { followingCount: 1 } },
-        { new: true, session }
-      ).select('username');
-      if (!follower) {
+      const currentUser = await User.findById(currentUserId).select('_id username followers following');
+      if (!currentUser) {
         const error = new Error('Authenticated user not found');
         error.status = 404;
         throw error;
       }
 
-      const updatedFollowing = await User.findByIdAndUpdate(
-        userId,
-        { $inc: { followersCount: 1 } },
-        { new: true, session }
-      );
-      if (!updatedFollowing) {
-        const error = new Error('User not found');
-        error.status = 404;
-        throw error;
+      const alreadyFollowingTarget = currentUser.following.some((id) => id && id.toString() === targetObjectId);
+      if (alreadyFollowingTarget) {
+        alreadyFollowing = true;
+        return;
       }
 
+      currentUser.following.addToSet(targetObjectId);
+      targetUser.followers.addToSet(currentUserId);
+
+      await currentUser.save({ session, validateModifiedOnly: true });
+      await targetUser.save({ session, validateModifiedOnly: true });
+
+      currentUser.followingCount = currentUser.following.length;
+      targetUser.followersCount = targetUser.followers.length;
+      await currentUser.save({ session, validateModifiedOnly: true });
+      await targetUser.save({ session, validateModifiedOnly: true });
+
+      follower = currentUser;
       [notification] = await Notification.create([{
-        userId,
+        userId: targetObjectId,
         type: 'FOLLOW',
         title: 'New follower',
         message: `${follower.username} started following you.`
       }], { session });
     });
+
+    if (alreadyFollowing) {
+      return res.status(409).json({ message: 'You already follow this user' });
+    }
 
     return res.status(201).json({ message: 'User followed successfully', notification });
   } catch (err) {
@@ -79,10 +87,12 @@ router.post('/follow', verifyToken, async (req, res) => {
 
 router.post('/unfollow', verifyToken, async (req, res) => {
   const { userId } = req.body || {};
-  if (!isValidObjectId(userId)) {
+  const targetObjectId = userId && String(userId).trim();
+
+  if (!isValidObjectId(targetObjectId)) {
     return res.status(400).json({ message: 'A valid userId is required' });
   }
-  if (new mongoose.Types.ObjectId(userId).equals(req.user.id)) {
+  if (new mongoose.Types.ObjectId(targetObjectId).equals(req.user.id)) {
     return res.status(400).json({ message: 'You cannot unfollow yourself' });
   }
 
@@ -90,33 +100,37 @@ router.post('/unfollow', verifyToken, async (req, res) => {
   try {
     session = await mongoose.startSession();
     let unfollowed = false;
-    await session.withTransaction(async () => {
-      const follow = await Follow.findOneAndDelete(
-        { followerId: req.user.id, followingId: userId },
-        { session }
-      );
-      if (!follow) return;
 
-      const follower = await User.findByIdAndUpdate(
-        req.user.id,
-        { $inc: { followingCount: -1 } },
-        { session }
-      );
-      const following = await User.findByIdAndUpdate(
-        userId,
-        { $inc: { followersCount: -1 } },
-        { session }
-      );
-      if (!follower || !following) {
-        throw new Error('Could not update follow counts because a user no longer exists');
+    await session.withTransaction(async () => {
+      const currentUser = await User.findById(req.user.id).select('_id following followers');
+      const targetUser = await User.findById(targetObjectId).select('_id followers following');
+
+      if (!currentUser || !targetUser) {
+        const error = new Error('User not found');
+        error.status = 404;
+        throw error;
       }
+
+      const wasFollowing = currentUser.following.some((id) => id && id.toString() === targetObjectId);
+      if (!wasFollowing) {
+        return;
+      }
+
+      currentUser.following = currentUser.following.filter((id) => id && id.toString() !== targetObjectId);
+      targetUser.followers = targetUser.followers.filter((id) => id && id.toString() !== req.user.id);
+
+      currentUser.followingCount = currentUser.following.length;
+      targetUser.followersCount = targetUser.followers.length;
+
+      await currentUser.save({ session, validateModifiedOnly: true });
+      await targetUser.save({ session, validateModifiedOnly: true });
       unfollowed = true;
     });
 
     if (!unfollowed) return res.status(404).json({ message: 'You do not follow this user' });
     return res.json({ message: 'User unfollowed successfully' });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    return res.status(err.status || 500).json({ message: err.message });
   } finally {
     if (session) await session.endSession();
   }

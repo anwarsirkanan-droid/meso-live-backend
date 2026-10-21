@@ -14,6 +14,15 @@ const resolveUser = (userId) => {
   return query?.select(publicUserFields).populate('agencyId', 'name');
 };
 
+const normalizeUserId = (rawValue) => {
+  if (!rawValue) return null;
+  const value = String(rawValue).trim();
+  if (!value) return null;
+  if (mongoose.Types.ObjectId.isValid(value)) return value;
+  const numericId = Number(value);
+  return Number.isInteger(numericId) ? value : null;
+};
+
 const getProfile = async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-password').populate('agencyId', 'name');
@@ -74,6 +83,92 @@ router.get('/:userId/profile', auth, async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ message: 'Could not load this profile.' });
+  }
+});
+
+router.post('/:userId/follow', auth, async (req, res) => {
+  const targetUserId = normalizeUserId(req.params.userId);
+  const currentUserId = req.user.id;
+
+  if (!targetUserId) {
+    return res.status(400).json({ message: 'A valid userId is required.' });
+  }
+  if (new mongoose.Types.ObjectId(targetUserId).equals(currentUserId)) {
+    return res.status(400).json({ message: 'You cannot follow yourself.' });
+  }
+
+  try {
+    const [currentUser, targetUser] = await Promise.all([
+      User.findById(currentUserId).select('_id username following followers followingCount followersCount'),
+      User.findById(targetUserId).select('_id username following followers followingCount followersCount')
+    ]);
+
+    if (!currentUser || !targetUser) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    if (currentUser.following.some((id) => id && id.toString() === targetUserId)) {
+      return res.status(409).json({ message: 'You already follow this user' });
+    }
+
+    currentUser.following = Array.from(new Set([...(currentUser.following || []).map((id) => id.toString()), targetUserId]));
+    currentUser.followingCount = currentUser.following.length;
+
+    targetUser.followers = Array.from(new Set([...(targetUser.followers || []).map((id) => id.toString()), currentUserId.toString()]));
+    targetUser.followersCount = targetUser.followers.length;
+
+    await Promise.all([currentUser.save({ validateModifiedOnly: true }), targetUser.save({ validateModifiedOnly: true })]);
+
+    await Notification.create({
+      userId: targetUserId,
+      type: 'FOLLOW',
+      title: 'New follower',
+      message: `${currentUser.username} started following you.`
+    });
+
+    return res.status(201).json({ message: 'User followed successfully' });
+  } catch (err) {
+    return res.status(500).json({ message: err.message || 'Could not follow user.' });
+  }
+});
+
+router.post('/:userId/unfollow', auth, async (req, res) => {
+  const targetUserId = normalizeUserId(req.params.userId);
+  const currentUserId = req.user.id;
+
+  if (!targetUserId) {
+    return res.status(400).json({ message: 'A valid userId is required.' });
+  }
+  if (new mongoose.Types.ObjectId(targetUserId).equals(currentUserId)) {
+    return res.status(400).json({ message: 'You cannot unfollow yourself.' });
+  }
+
+  try {
+    const [currentUser, targetUser] = await Promise.all([
+      User.findById(currentUserId).select('_id following followers followingCount followersCount'),
+      User.findById(targetUserId).select('_id following followers followingCount followersCount')
+    ]);
+
+    if (!currentUser || !targetUser) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const isFollowing = currentUser.following.some((id) => id && id.toString() === targetUserId);
+    if (!isFollowing) {
+      return res.status(404).json({ message: 'You do not follow this user' });
+    }
+
+    currentUser.following = currentUser.following.filter((id) => id && id.toString() !== targetUserId);
+    currentUser.followingCount = currentUser.following.length;
+
+    targetUser.followers = targetUser.followers.filter((id) => id && id.toString() !== currentUserId.toString());
+    targetUser.followersCount = targetUser.followers.length;
+
+    await Promise.all([currentUser.save({ validateModifiedOnly: true }), targetUser.save({ validateModifiedOnly: true })]);
+
+    return res.json({ message: 'User unfollowed successfully' });
+  } catch (err) {
+    return res.status(500).json({ message: err.message || 'Could not unfollow user.' });
   }
 });
 

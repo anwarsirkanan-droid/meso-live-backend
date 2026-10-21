@@ -59,6 +59,8 @@ const userSchema = new mongoose.Schema({
   },
   isOnline: { type: Boolean, default: false },
   lastSeen: { type: Date, default: null },
+  followers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User', default: [] }],
+  following: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User', default: [] }],
   followersCount: { type: Number, default: 0 },
   followingCount: { type: Number, default: 0 },
   checkInStreak: { type: Number, default: 0 },
