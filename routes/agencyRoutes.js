@@ -133,6 +133,105 @@ router.post('/join', auth, async (req, res) => {
   }
 });
 
+function agencyLookupForInput(value) {
+  const input = typeof value === 'string' ? value.trim() : '';
+  const lookup = [{ agencyCode: input.toUpperCase() }, { code: input }, { agencyName: input }, { name: input }];
+  if (mongoose.Types.ObjectId.isValid(input)) lookup.push({ _id: input });
+  return lookup;
+}
+
+router.post('/apply', auth, requireRole('HOST'), async (req, res) => {
+  const agencyInput = req.body?.agencyId || req.body?.agencyCode;
+  const phoneNumber = typeof req.body?.phoneNumber === 'string' ? req.body.phoneNumber.trim() : '';
+  if (typeof agencyInput !== 'string' || !agencyInput.trim()) return res.status(400).json({ message: 'Agent Name, Agency ID, or agency code is required.' });
+  if (!phoneNumber || phoneNumber.length < 7) return res.status(400).json({ message: 'A valid host phone number or contact is required.' });
+  try {
+    const agencyLookup = agencyLookupForInput(agencyInput);
+    if (/^\d+$/.test(agencyInput.trim())) {
+      const agent = await User.findOne({ publicId: Number(agencyInput.trim()) }).select('_id');
+      if (agent) agencyLookup.push({ ownerId: agent._id });
+    }
+    const [agency, host] = await Promise.all([
+      Agency.findOne({ $or: agencyLookup }),
+      User.findById(req.user.id).select('agencyId')
+    ]);
+    if (!agency) return res.status(404).json({ message: 'Agency not found.' });
+    if (!host) return res.status(404).json({ message: 'Host not found.' });
+    if (host.agencyId) return res.status(409).json({ message: 'You already belong to an agency.' });
+    const application = await AgencyApplication.create({
+      applicantId: host._id,
+      agencyId: agency._id,
+      applicationType: 'HOST',
+      phoneNumber,
+      status: 'PENDING',
+    });
+    return res.status(201).json({ message: 'Agency application submitted.', application });
+  } catch (error) {
+    if (error.code === 11000) return res.status(409).json({ message: 'You already have a pending application for this agency.' });
+    return res.status(500).json({ message: 'Could not submit the agency application.' });
+  }
+});
+
+router.get('/requests', auth, requireRole('AGENT'), async (req, res) => {
+  try {
+    const agent = await User.findById(req.user.id).select('agencyId');
+    const agency = agent?.agencyId ? await Agency.findById(agent.agencyId).select('_id') : await Agency.findOne({ ownerId: req.user.id }).select('_id');
+    if (!agency) return res.status(404).json({ message: 'Agency not found.' });
+    const applications = await AgencyApplication.find({ agencyId: agency._id, applicationType: 'HOST', status: 'PENDING' })
+      .populate('applicantId', 'publicId username name avatar profilePicture phoneNumber')
+      .sort({ createdAt: -1 });
+    return res.json({ applications });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not load agency applications.' });
+  }
+});
+
+router.post('/approve', auth, requireRole('AGENT'), async (req, res) => {
+  const applicationId = typeof req.body?.applicationId === 'string' ? req.body.applicationId.trim() : '';
+  if (!mongoose.Types.ObjectId.isValid(applicationId)) return res.status(400).json({ message: 'A valid application ID is required.' });
+  try {
+    const agent = await User.findById(req.user.id).select('agencyId');
+    const agency = agent?.agencyId ? await Agency.findById(agent.agencyId) : await Agency.findOne({ ownerId: req.user.id });
+    if (!agency) return res.status(404).json({ message: 'Agency not found.' });
+    const application = await AgencyApplication.findOne({ _id: applicationId, agencyId: agency._id, applicationType: 'HOST', status: 'PENDING' });
+    if (!application) return res.status(404).json({ message: 'Pending host application not found.' });
+    const host = await User.findById(application.applicantId);
+    if (!host) return res.status(404).json({ message: 'Applicant not found.' });
+    if (host.agencyId && !host.agencyId.equals(agency._id)) return res.status(409).json({ message: 'This host already belongs to another agency.' });
+    host.agencyId = agency._id;
+    host.isHost = true;
+    if (host.role === 'USER') host.role = 'HOST';
+    if (!host.hostStartDate) host.hostStartDate = new Date();
+    await host.save();
+    application.status = 'APPROVED';
+    application.reviewedBy = req.user.id;
+    application.reviewedAt = new Date();
+    await application.save();
+    await Agency.findByIdAndUpdate(agency._id, { $addToSet: { members: host._id }, $inc: { hostsCount: 1 } });
+    return res.json({ message: 'Host application approved.', application, user: { _id: host._id, agencyId: host.agencyId, role: host.role, isHost: host.isHost } });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not approve the host application.' });
+  }
+});
+
+router.post('/reject', auth, requireRole('AGENT'), async (req, res) => {
+  const applicationId = typeof req.body?.applicationId === 'string' ? req.body.applicationId.trim() : '';
+  if (!mongoose.Types.ObjectId.isValid(applicationId)) return res.status(400).json({ message: 'A valid application ID is required.' });
+  try {
+    const agent = await User.findById(req.user.id).select('agencyId');
+    const agency = agent?.agencyId ? await Agency.findById(agent.agencyId).select('_id') : await Agency.findOne({ ownerId: req.user.id }).select('_id');
+    const application = agency && await AgencyApplication.findOneAndUpdate(
+      { _id: applicationId, agencyId: agency._id, applicationType: 'HOST', status: 'PENDING' },
+      { $set: { status: 'REJECTED', reviewedBy: req.user.id, reviewedAt: new Date() } },
+      { new: true }
+    );
+    if (!application) return res.status(404).json({ message: 'Pending host application not found.' });
+    return res.json({ message: 'Host application rejected.', application });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not reject the host application.' });
+  }
+});
+
 router.get('/invitations/pending', auth, async (req, res) => {
   try {
     const invitations = await AgencyInvitation.find({ inviteeId: req.user.id, status: 'PENDING' })

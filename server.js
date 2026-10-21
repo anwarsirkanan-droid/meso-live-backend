@@ -69,6 +69,7 @@ app.use('/api/message', messageRoutes);
 app.use('/api/gift', giftRoutes);
 app.use('/api/game', gameRoutes);
 app.use('/api/agency', agencyRoutes);
+app.use('/api/agencies', agencyRoutes);
 app.use('/api/task', taskRoutes);
 app.use('/api/tasks', unifiedTaskRoutes);
 app.use('/api/rewards', unifiedTaskRoutes);
