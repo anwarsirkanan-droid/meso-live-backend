@@ -9,7 +9,7 @@ const auth = require('../middleware/auth');
 const CATEGORIES = ['Follow', 'Party', 'For You', 'Ethiopia', 'Rank'];
 const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
 const roomPopulation = [
-  { path: 'ownerId', select: 'username avatar country region language' },
+  { path: 'ownerId', select: 'username avatar country region language publicId role' },
   { path: 'seats.userId', select: 'username avatar charmPoints' }
 ];
 
@@ -24,6 +24,8 @@ const serializeRoom = (room) => ({
     country: room.ownerId.country,
     region: room.ownerId.region,
     language: room.ownerId.language,
+    publicId: room.ownerId.publicId,
+    role: room.ownerId.role,
   } : null,
   title: room.title,
   cover: room.coverPhoto || room.banner,
@@ -221,7 +223,16 @@ router.get('/all', async (req, res) => {
 router.post('/create', auth, async (req, res) => {
   try {
     const { title, banner = '', coverPhoto = banner, announcement = '', category = 'For You', region = '', language = '' } = req.body;
-    if (typeof title !== 'string' || !title.trim() || title.trim().length > 100) {
+    
+    // Dynamically assign title using authenticated user's name if not provided
+    let roomTitle = title;
+    if (!title || !title.trim()) {
+      const user = await User.findById(req.user.id).select('name username');
+      const userName = user?.name || user?.username || 'My';
+      roomTitle = `${userName}'s Live Room`;
+    }
+    
+    if (typeof roomTitle !== 'string' || !roomTitle.trim() || roomTitle.trim().length > 100) {
       return res.status(400).json({ message: 'Room title is required and must be at most 100 characters.' });
     }
     if (!CATEGORIES.includes(category)) {
@@ -233,7 +244,7 @@ router.post('/create', auth, async (req, res) => {
       ...(seatIndex === 0 ? { isCrownMic: true } : {}),
     }));
     const room = await Room.create({
-      title: title.trim(),
+      title: roomTitle.trim(),
       ownerId: req.user.id,
       coverPhoto,
       banner,
@@ -241,8 +252,17 @@ router.post('/create', auth, async (req, res) => {
       category,
       region: typeof region === 'string' ? region.trim() : '',
       language: typeof language === 'string' ? language.trim() : '',
-      seats
+      seats,
+      isLive: true
     });
+    
+    // Emit socket event for active rooms update
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('active-rooms-updated', { roomId: room._id, isLive: true });
+      io.emit('room_list_updated', { roomId: room._id, isLive: true });
+    }
+    
     res.status(201).json({ message: 'Room created successfully', room });
   } catch (err) {
     res.status(500).json({ message: err.message });

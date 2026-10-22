@@ -29,7 +29,11 @@ const getProfile = async (req, res) => {
     const user = await User.findById(req.user.id).select('-password').populate('agencyId', 'name agencyName');
     if (!user) return res.status(404).json({ message: 'User not found' });
     if (user.publicId == null) await user.save({ validateModifiedOnly: true });
-    return res.json(withProfileMetadata(user));
+    const profile = withProfileMetadata(user);
+    // Ensure roles and publicId are included
+    profile.role = user.role;
+    profile.publicId = user.publicId;
+    return res.json(profile);
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }

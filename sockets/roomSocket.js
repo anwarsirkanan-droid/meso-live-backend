@@ -9,6 +9,8 @@ module.exports = (io, socket) => {
   const hostTaskSessions = new Map();
   const userId = socket.data.userId;
   let disconnecting = false;
+
+  // WebRTC Signaling Relay
   const relaySignal = (event, payload = {}) => {
     const roomId = getRoomId(payload);
     const targetSocketId = [payload.target, payload.to, payload.peerId]
@@ -33,6 +35,7 @@ module.exports = (io, socket) => {
 
   const getRoomId = (payload) => typeof payload === 'string' ? payload : payload?.roomId;
 
+  // Host Task Tracking Logic
   const startHostTaskTracking = (roomId) => {
     if (hostTaskSessions.has(roomId)) return;
     const session = { lastRecordedAt: Date.now(), pending: Promise.resolve(), interval: null };
@@ -71,6 +74,7 @@ module.exports = (io, socket) => {
     }
   };
 
+  // Perform Join Room
   const performJoin = async (roomId) => {
     if (disconnecting) return { error: 'Socket is disconnecting' };
     try {
@@ -91,15 +95,18 @@ module.exports = (io, socket) => {
       joinedRoomIds.set(roomId, isHost);
       const update = { $inc: { currentListenersCount: 1 } };
       if (isHost) update.$set = { isLive: true };
+
       const updatedRoom = await Room.findByIdAndUpdate(
         roomId,
         update,
         { new: true }
-      ).populate('seats.userId', 'username avatar');
+      ).populate('seats.userId', 'username avatar customId');
+
       if (!updatedRoom) {
         await socket.leave(roomId);
         return { error: 'Room no longer exists' };
       }
+
       joinedRoomIds.set(roomId, isHost);
       io.to(roomId).emit('room_updated', updatedRoom);
       io.to(roomId).emit('user_joined', {
@@ -110,6 +117,7 @@ module.exports = (io, socket) => {
         socketId: socket.id,
         userId,
       });
+
       if (isHost) {
         startHostTaskTracking(roomId);
         io.emit('room-status-changed', { roomId, isLive: true });
@@ -156,10 +164,26 @@ module.exports = (io, socket) => {
 
   socket.on('join_room', joinRoom);
   socket.on('join-room', joinRoom);
+
+  // WebRTC Signals
   socket.on('offer', (payload) => relaySignal('offer', payload));
   socket.on('answer', (payload) => relaySignal('answer', payload));
   socket.on('ice-candidate', (payload) => relaySignal('ice-candidate', payload));
 
+  // Follow Real-time Notification Event
+  socket.on('user_follow', async ({ targetUserId, roomId } = {}) => {
+    try {
+      if (!targetUserId || !mongoose.Types.ObjectId.isValid(targetUserId)) return;
+      io.to(roomId).emit('follow_updated', {
+        followerId: userId,
+        targetUserId,
+      });
+    } catch (err) {
+      console.error('Error broadcasting follow event:', err.message);
+    }
+  });
+
+  // Leave Room & Automatic Seat Clear (24 Seats)
   const leaveRoom = async (roomId) => {
     if (!joinedRoomIds.has(roomId)) return;
     const isHost = joinedRoomIds.get(roomId);
@@ -177,6 +201,7 @@ module.exports = (io, socket) => {
       $set: { 'seats.$[seat].userId': null }
     };
     if (isHost) update.$set.isLive = false;
+
     let room = await Room.findOneAndUpdate(
       { _id: roomId, currentListenersCount: { $gt: 0 } },
       update,
@@ -184,7 +209,8 @@ module.exports = (io, socket) => {
         new: true,
         arrayFilters: [{ 'seat.userId': userId }]
       }
-    );
+    ).populate('seats.userId', 'username avatar customId');
+
     if (!room) {
       const fallbackUpdate = { $set: { 'seats.$[seat].userId': null } };
       if (isHost) fallbackUpdate.$set.isLive = false;
@@ -192,9 +218,10 @@ module.exports = (io, socket) => {
         roomId,
         fallbackUpdate,
         { new: true, arrayFilters: [{ 'seat.userId': userId }] }
-      );
+      ).populate('seats.userId', 'username avatar customId');
     }
     if (!room) return;
+
     io.to(roomId).emit('room_updated', room);
     io.to(roomId).emit('user_left', {
       userId,
@@ -220,11 +247,12 @@ module.exports = (io, socket) => {
   socket.on('leave_room', handleLeaveRoom);
   socket.on('leave-room', handleLeaveRoom);
 
+  // Update Seat Settings (Seats 0 to 23 Validation)
   socket.on('update_seat', async ({ roomId, seatIndex, isLocked, isMuted } = {}) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(roomId) ||
-          !Number.isInteger(seatIndex) || seatIndex < 0 || seatIndex >= 25) {
-        return socket.emit('error', { message: 'Invalid room or seat ID' });
+          !Number.isInteger(seatIndex) || seatIndex < 0 || seatIndex >= 24) {
+        return socket.emit('error', { message: 'Invalid room or seat ID (Must be between 0 and 23)' });
       }
       const room = await Room.findById(roomId);
       if (!room) return socket.emit('error', { message: 'Room not found' });
@@ -247,6 +275,7 @@ module.exports = (io, socket) => {
     }
   });
 
+  // Disconnect Cleanup
   socket.on('disconnect', async () => {
     disconnecting = true;
     await Promise.all(joiningRoomIds.values());
