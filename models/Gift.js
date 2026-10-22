@@ -1,16 +1,22 @@
+// backend/models/Gift.js
 const mongoose = require('mongoose');
 
-const giftSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  icon: { type: String, required: true },
-  coinPrice: { type: Number, required: true },
-  category: { 
-    type: String, 
-    enum: ['LUCKY', 'SUPER_LUCKY', 'LUXURY'], 
-    required: true 
+const giftSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true },
+    coinsPrice: { type: Number, required: true, min: 1 },
+    icon: { type: String, default: '🎁' },
+    animationUrl: { type: String, default: '' },
+    // FIX: 'type' — giftController charm rate fayyadama
+    type: {
+      type: String,
+      enum: ['normal', 'lucky', 'superLucky', 'luxury'],
+      default: 'normal'
+    },
+    // FIX: 'active' — giftController mirkaneessa
+    active: { type: Boolean, default: true },
   },
-  hostShareRate: { type: Number, required: true }, // e.g. 0.04 (Lucky), 0.02 (Super Lucky), 0.70 (Luxury)
-  charmRate: { type: Number, required: true }      // e.g. 0.02, 0.04, 0.70
-}, { timestamps: true });
+  { timestamps: true }
+);
 
 module.exports = mongoose.model('Gift', giftSchema);

@@ -3,12 +3,14 @@ const Room = require('../models/Room');
 const User = require('../models/User');
 const { recordHostTime } = require('../services/hostDailyTaskService');
 
+
 module.exports = (io, socket) => {
   const joinedRoomIds = new Map();
   const joiningRoomIds = new Map();
   const hostTaskSessions = new Map();
   const userId = socket.data.userId;
   let disconnecting = false;
+
 
   // WebRTC Signaling Relay
   const relaySignal = (event, payload = {}) => {
@@ -170,6 +172,100 @@ module.exports = (io, socket) => {
   socket.on('answer', (payload) => relaySignal('answer', payload));
   socket.on('ice-candidate', (payload) => relaySignal('ice-candidate', payload));
 
+  // ═══════════════════════════════════════
+  // NEW: CHAT MESSAGE (Real-time)
+  // ═══════════════════════════════════════
+  socket.on('chat_message', async ({ roomId, text } = {}) => {
+    try {
+      if (!joinedRoomIds.has(roomId)) {
+        return socket.emit('error', { message: 'Join the room first' });
+      }
+      if (!text || typeof text !== 'string' || !text.trim()) {
+        return socket.emit('error', { message: 'Message cannot be empty' });
+      }
+      const user = await User.findById(userId).select('username avatar');
+      io.to(roomId).emit('chat_message', {
+        id: Date.now(),
+        userId,
+        username: user?.username || 'User',
+        avatar: user?.avatar,
+        text: text.trim().slice(0, 500),
+      });
+    } catch (err) {
+      socket.emit('error', { message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════
+  // NEW: NOTICE UPDATE (Host only)
+  // ═══════════════════════════════════════
+  socket.on('notice_update', async ({ roomId, notice } = {}) => {
+    try {
+      if (!joinedRoomIds.has(roomId)) {
+        return socket.emit('error', { message: 'Join the room first' });
+      }
+      const room = await Room.findById(roomId);
+      if (!room) return socket.emit('error', { message: 'Room not found' });
+      if (room.ownerId.toString() !== userId) {
+        return socket.emit('error', { message: 'Only the room owner can update the notice' });
+      }
+      if (!notice || typeof notice !== 'string') {
+        return socket.emit('error', { message: 'Invalid notice' });
+      }
+      room.notice = notice.trim().slice(0, 300);
+      await room.save();
+      io.to(roomId).emit('notice_update', { notice: room.notice });
+    } catch (err) {
+      socket.emit('error', { message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════
+  // NEW: MIC MODE (Host only)
+  // ═══════════════════════════════════════
+  socket.on('mic_mode', async ({ roomId, mode } = {}) => {
+    try {
+      if (!joinedRoomIds.has(roomId)) {
+        return socket.emit('error', { message: 'Join the room first' });
+      }
+      const room = await Room.findById(roomId);
+      if (!room) return socket.emit('error', { message: 'Room not found' });
+      if (room.ownerId.toString() !== userId) {
+        return socket.emit('error', { message: 'Only the room owner can change mic mode' });
+      }
+      if (!['free', 'apply'].includes(mode)) {
+        return socket.emit('error', { message: 'Invalid mic mode' });
+      }
+      room.micMode = mode;
+      await room.save();
+      io.to(roomId).emit('mic_mode', { mode });
+    } catch (err) {
+      socket.emit('error', { message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════
+  // NEW: CLOSE ALL MICS (Host only)
+  // ═══════════════════════════════════════
+  socket.on('close_all_mics', async ({ roomId } = {}) => {
+    try {
+      if (!joinedRoomIds.has(roomId)) {
+        return socket.emit('error', { message: 'Join the room first' });
+      }
+      const room = await Room.findById(roomId);
+      if (!room) return socket.emit('error', { message: 'Room not found' });
+      if (room.ownerId.toString() !== userId) {
+        return socket.emit('error', { message: 'Only the room owner can close all mics' });
+      }
+      room.seats.forEach((seat) => { seat.isMuted = true; });
+      await room.save();
+      io.to(roomId).emit('room_updated', room);
+      io.to(roomId).emit('close_all_mics');
+    } catch (err) {
+      socket.emit('error', { message: err.message });
+    }
+  });
+
   // Follow Real-time Notification Event
   socket.on('user_follow', async ({ targetUserId, roomId } = {}) => {
     try {
@@ -183,7 +279,7 @@ module.exports = (io, socket) => {
     }
   });
 
-  // Leave Room & Automatic Seat Clear (24 Seats)
+  // Leave Room & Automatic Seat Clear (25 Seats)
   const leaveRoom = async (roomId) => {
     if (!joinedRoomIds.has(roomId)) return;
     const isHost = joinedRoomIds.get(roomId);
@@ -247,12 +343,13 @@ module.exports = (io, socket) => {
   socket.on('leave_room', handleLeaveRoom);
   socket.on('leave-room', handleLeaveRoom);
 
-  // Update Seat Settings (Seats 0 to 23 Validation)
+  // Update Seat Settings (Seats 0 to 24 — 25 Seats)
   socket.on('update_seat', async ({ roomId, seatIndex, isLocked, isMuted } = {}) => {
     try {
+      // FIX: 24 → 25 (seatIndex 0–24)
       if (!mongoose.Types.ObjectId.isValid(roomId) ||
-          !Number.isInteger(seatIndex) || seatIndex < 0 || seatIndex >= 24) {
-        return socket.emit('error', { message: 'Invalid room or seat ID (Must be between 0 and 23)' });
+          !Number.isInteger(seatIndex) || seatIndex < 0 || seatIndex >= 25) {
+        return socket.emit('error', { message: 'Invalid room or seat ID (Must be between 0 and 24)' });
       }
       const room = await Room.findById(roomId);
       if (!room) return socket.emit('error', { message: 'Room not found' });

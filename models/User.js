@@ -1,12 +1,16 @@
 const mongoose = require('mongoose');
 const { allocatePublicUserId } = require('../services/userIdService');
 
+
 const userSchema = new mongoose.Schema({
   publicId: { type: Number, min: 1_000_000, max: 9_999_999 },
   username: { type: String, required: true, unique: true, trim: true },
   email: { type: String, required: true, trim: true, lowercase: true, unique: true },
   googleId: { type: String, default: null },
-  password: { type: String, default: undefined },
+  // FIX: select: false — password query irraa hin deebisu
+  password: { type: String, default: undefined, select: false },
+  // FIX: customId dabalame — frontend/userController fayyadama
+  customId: { type: String, unique: true, sparse: true, trim: true },
   name: { type: String, trim: true, default: '' },
   phoneNumber: {
     type: String,
@@ -27,10 +31,10 @@ const userSchema = new mongoose.Schema({
     default: 'Male',
     required: [function isProfileComplete() { return this.profileComplete; }, 'Gender is required']
   },
-  role: { 
-    type: String, 
-    enum: ['USER', 'HOST', 'AGENT', 'ADMIN'], 
-    default: 'USER' 
+  role: {
+    type: String,
+    enum: ['USER', 'HOST', 'AGENT', 'ADMIN'],
+    default: 'USER'
   },
   isHost: { type: Boolean, default: false },
   isAgent: { type: Boolean, default: false },
@@ -74,7 +78,9 @@ const userSchema = new mongoose.Schema({
   agencyName: { type: String, trim: true, default: '' }
 }, { timestamps: true });
 
+
 userSchema.index({ publicId: 1 }, { unique: true, sparse: true });
+
 
 userSchema.pre('save', async function assignPublicId() {
   if (this.publicId == null) {
@@ -82,9 +88,11 @@ userSchema.pre('save', async function assignPublicId() {
   }
 });
 
+
 userSchema.index(
   { googleId: 1 },
   { unique: true, partialFilterExpression: { googleId: { $type: 'string' } } }
 );
+
 
 module.exports = mongoose.model('User', userSchema);
