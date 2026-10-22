@@ -47,18 +47,24 @@ async function getFilteredRooms(req, res) {
     const region = typeof req.query.region === 'string' ? req.query.region.trim() : '';
     const language = typeof req.query.language === 'string' ? req.query.language.trim() : '';
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
-    if (!['follow', 'foryou', 'party'].includes(tab)) {
-      return res.status(400).json({ message: 'tab must be follow, foryou, or party' });
+
+    const validTabs = ['follow', ...CATEGORIES.map(normalizeTab)];
+    if (!validTabs.includes(tab)) {
+      return res.status(400).json({ message: 'Invalid tab or category' });
     }
 
     const filter = { isLive: true };
     const andFilters = [];
     let sort = { currentListenersCount: -1, updatedAt: -1 };
+
     if (tab === 'follow') {
       const follows = await Follow.find({ followerId: req.user.id }).select('followingId').lean();
       filter.ownerId = { $in: follows.map(({ followingId }) => followingId) };
-    } else if (tab === 'party') {
-      filter.category = 'Party';
+    } else if (tab !== 'foryou') {
+      const matchedCategory = CATEGORIES.find((c) => normalizeTab(c) === tab);
+      if (matchedCategory) {
+        filter.category = matchedCategory;
+      }
     }
 
     if (region) {
@@ -221,7 +227,6 @@ router.get('/all', async (req, res) => {
   }
 });
 
-// FIXED: Room creation strictly binds ownerId to the currently logged-in user (Anwar)
 router.post('/create', auth, async (req, res) => {
   try {
     const { title, banner = '', coverPhoto = banner, announcement = '', category = 'For You', region = '', language = '' } = req.body;
@@ -239,12 +244,12 @@ router.post('/create', auth, async (req, res) => {
 
     const seats = Array.from({ length: 25 }, (_, seatIndex) => ({
       seatIndex,
-      ...(seatIndex === 0 ? { userId: req.user.id } : {}), // Seat 0 host ta'a
+      ...(seatIndex === 0 ? { userId: req.user.id } : {}),
     }));
 
     const room = await Room.create({
       title: roomTitle,
-      ownerId: req.user.id, // 👈 Strictly bound to logged-in user Anwar
+      ownerId: req.user.id,
       coverPhoto,
       banner,
       announcement,
