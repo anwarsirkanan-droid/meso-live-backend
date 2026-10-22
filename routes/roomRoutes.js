@@ -38,7 +38,7 @@ const serializeRoom = (room) => ({
   isLive: room.isLive,
 });
 
-async function getFilteredRooms(req, res) {
+async function getFilteredRooms(req, res, next) {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
@@ -131,7 +131,7 @@ const isOwnerOrAdmin = async (req, res, next) => {
   }
 };
 
-router.get('/categories', async (req, res) => {
+router.get('/categories', async (req, res, next) => {
   try {
     const counts = await Room.aggregate([
       { $group: { _id: '$category', count: { $sum: 1 } } }
@@ -145,7 +145,7 @@ router.get('/categories', async (req, res) => {
   }
 });
 
-router.get('/search', async (req, res) => {
+router.get('/search', async (req, res, next) => {
   try {
     const page = Number.parseInt(req.query.page, 10) || 1;
     const limit = Number.parseInt(req.query.limit, 10) || 10;
@@ -165,7 +165,7 @@ router.get('/search', async (req, res) => {
   }
 });
 
-router.get('/search/owner/:ownerId', async (req, res) => {
+router.get('/search/owner/:ownerId', async (req, res, next) => {
   try {
     if (!isValidId(req.params.ownerId)) {
       return res.status(400).json({ message: 'Invalid owner ID' });
@@ -177,7 +177,7 @@ router.get('/search/owner/:ownerId', async (req, res) => {
   }
 });
 
-router.get('/category/:category', async (req, res) => {
+router.get('/category/:category', async (req, res, next) => {
   try {
     if (!CATEGORIES.includes(req.params.category)) {
       return res.status(400).json({ message: 'Invalid room category' });
@@ -191,7 +191,7 @@ router.get('/category/:category', async (req, res) => {
 
 router.get('/', auth, getFilteredRooms);
 
-async function getActiveRooms(req, res) {
+async function getActiveRooms(req, res, next) {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
@@ -209,7 +209,7 @@ async function getActiveRooms(req, res) {
 router.get('/active', getActiveRooms);
 router.get('/live', getActiveRooms);
 
-router.get('/all', async (req, res) => {
+router.get('/all', async (req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
@@ -227,7 +227,7 @@ router.get('/all', async (req, res) => {
   }
 });
 
-router.post('/create', auth, async (req, res) => {
+router.post('/create', auth, async (req, res, next) => {
   try {
     const { title, banner = '', coverPhoto = banner, announcement = '', category = 'For You', region = '', language = '' } = req.body;
 
@@ -274,7 +274,7 @@ router.post('/create', auth, async (req, res) => {
   }
 });
 
-router.get('/:roomId', auth, async (req, res) => {
+router.get('/:roomId', auth, async (req, res, next) => {
   try {
     if (!isValidId(req.params.roomId)) {
       return res.status(400).json({ message: 'Invalid room ID' });
@@ -299,7 +299,7 @@ router.get('/:roomId', auth, async (req, res) => {
   }
 });
 
-router.post('/:roomId/seat/:seatIndex/take', auth, async (req, res) => {
+router.post('/:roomId/seat/:seatIndex/take', auth, async (req, res, next) => {
   try {
     const { roomId, seatIndex: rawSeatIndex } = req.params;
     const seatIndex = Number.parseInt(rawSeatIndex, 10);
@@ -338,7 +338,7 @@ router.post('/:roomId/seat/:seatIndex/take', auth, async (req, res) => {
   }
 });
 
-router.post('/:roomId/seat/:seatIndex/leave', auth, async (req, res) => {
+router.post('/:roomId/seat/:seatIndex/leave', auth, async (req, res, next) => {
   try {
     const { roomId, seatIndex: rawSeatIndex } = req.params;
     const seatIndex = Number.parseInt(rawSeatIndex, 10);
@@ -359,7 +359,7 @@ router.post('/:roomId/seat/:seatIndex/leave', auth, async (req, res) => {
   }
 });
 
-router.post('/:roomId/moderate/mute/:seatIndex', auth, isOwnerOrAdmin, async (req, res) => {
+router.post('/:roomId/moderate/mute/:seatIndex', auth, isOwnerOrAdmin, async (req, res, next) => {
   try {
     const seatIndex = Number.parseInt(req.params.seatIndex, 10);
     const seat = req.room.seats.find((entry) => entry.seatIndex === seatIndex);
@@ -372,7 +372,7 @@ router.post('/:roomId/moderate/mute/:seatIndex', auth, isOwnerOrAdmin, async (re
   }
 });
 
-router.post('/:roomId/moderate/lock/:seatIndex', auth, isOwnerOrAdmin, async (req, res) => {
+router.post('/:roomId/moderate/lock/:seatIndex', auth, isOwnerOrAdmin, async (req, res, next) => {
   try {
     const seatIndex = Number.parseInt(req.params.seatIndex, 10);
     const seat = req.room.seats.find((entry) => entry.seatIndex === seatIndex);
@@ -385,7 +385,7 @@ router.post('/:roomId/moderate/lock/:seatIndex', auth, isOwnerOrAdmin, async (re
   }
 });
 
-router.post('/:roomId/moderate/kick/:userId', auth, isOwnerOrAdmin, async (req, res) => {
+router.post('/:roomId/moderate/kick/:userId', auth, isOwnerOrAdmin, async (req, res, next) => {
   try {
     if (!isValidId(req.params.userId)) {
       return res.status(400).json({ message: 'Invalid user ID' });
@@ -401,7 +401,7 @@ router.post('/:roomId/moderate/kick/:userId', auth, isOwnerOrAdmin, async (req, 
   }
 });
 
-router.post('/:roomId/moderate/ban/:userId', auth, isOwnerOrAdmin, async (req, res) => {
+router.post('/:roomId/moderate/ban/:userId', auth, isOwnerOrAdmin, async (req, res, next) => {
   try {
     if (!isValidId(req.params.userId)) {
       return res.status(400).json({ message: 'Invalid user ID' });
