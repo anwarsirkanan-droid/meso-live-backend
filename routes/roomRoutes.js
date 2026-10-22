@@ -1,10 +1,12 @@
 const express = require('express');
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 const router = express.Router();
 const Room = require('../models/Room');
 const User = require('../models/User');
 const Follow = require('../models/Follow');
 const auth = require('../middleware/auth');
+
 
 const CATEGORIES = ['Follow', 'Party', 'For You', 'Ethiopia', 'Rank'];
 const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
@@ -12,6 +14,7 @@ const roomPopulation = [
   { path: 'ownerId', select: 'username avatar country region language publicId role' },
   { path: 'seats.userId', select: 'username avatar charmPoints' }
 ];
+
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const normalizeTab = (tab) => String(tab || 'foryou').trim().toLowerCase().replace(/[ _-]/g, '');
@@ -36,6 +39,7 @@ const serializeRoom = (room) => ({
   isLive: room.isLive,
 });
 
+
 async function getFilteredRooms(req, res) {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma', 'no-cache');
@@ -49,6 +53,7 @@ async function getFilteredRooms(req, res) {
       return res.status(400).json({ message: 'tab must be follow, foryou, or party' });
     }
 
+
     const filter = { isLive: true };
     const andFilters = [];
     let sort = { currentListenersCount: -1, updatedAt: -1 };
@@ -58,6 +63,7 @@ async function getFilteredRooms(req, res) {
     } else if (tab === 'party') {
       filter.category = 'Party';
     }
+
 
     if (region) {
       const regionExpression = new RegExp(`^${escapeRegex(region)}$`, 'i');
@@ -71,6 +77,7 @@ async function getFilteredRooms(req, res) {
       ] });
     }
     if (language) filter.language = new RegExp(`^${escapeRegex(language)}$`, 'i');
+
 
     if (search) {
       const searchExpression = new RegExp(escapeRegex(search), 'i');
@@ -89,7 +96,9 @@ async function getFilteredRooms(req, res) {
       andFilters.push({ $or: searchConditions });
     }
 
+
     if (andFilters.length) filter.$and = andFilters;
+
 
     const rooms = await Room.find(filter)
       .populate(roomPopulation)
@@ -101,14 +110,17 @@ async function getFilteredRooms(req, res) {
   }
 }
 
+
 const isOwnerOrAdmin = async (req, res, next) => {
   try {
     if (!isValidId(req.params.roomId)) {
       return res.status(400).json({ message: 'Invalid room ID' });
     }
 
+
     const room = await Room.findById(req.params.roomId);
     if (!room) return res.status(404).json({ message: 'Room not found' });
+
 
     const user = await User.findById(req.user.id).select('role');
     const isOwner = room.ownerId.toString() === req.user.id;
@@ -117,12 +129,14 @@ const isOwnerOrAdmin = async (req, res, next) => {
       return res.status(403).json({ message: 'Only the room owner or an admin can moderate.' });
     }
 
+
     req.room = room;
     return next();
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
 };
+
 
 router.get('/categories', async (req, res) => {
   try {
@@ -137,6 +151,7 @@ router.get('/categories', async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+
 
 router.get('/search', async (req, res) => {
   try {
@@ -158,6 +173,7 @@ router.get('/search', async (req, res) => {
   }
 });
 
+
 router.get('/search/owner/:ownerId', async (req, res) => {
   try {
     if (!isValidId(req.params.ownerId)) {
@@ -169,6 +185,7 @@ router.get('/search/owner/:ownerId', async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+
 
 router.get('/category/:category', async (req, res) => {
   try {
@@ -182,7 +199,9 @@ router.get('/category/:category', async (req, res) => {
   }
 });
 
+
 router.get('/', auth, getFilteredRooms);
+
 
 async function getActiveRooms(req, res) {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -199,8 +218,10 @@ async function getActiveRooms(req, res) {
   }
 }
 
+
 router.get('/active', getActiveRooms);
 router.get('/live', getActiveRooms);
+
 
 router.get('/all', async (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -220,10 +241,11 @@ router.get('/all', async (req, res) => {
   }
 });
 
+
 router.post('/create', auth, async (req, res) => {
   try {
     const { title, banner = '', coverPhoto = banner, announcement = '', category = 'For You', region = '', language = '' } = req.body;
-    
+
     // Dynamically assign title using authenticated user's name if not provided
     let roomTitle = title;
     if (!title || !title.trim()) {
@@ -231,13 +253,14 @@ router.post('/create', auth, async (req, res) => {
       const userName = user?.name || user?.username || 'My';
       roomTitle = `${userName}'s Live Room`;
     }
-    
+
     if (typeof roomTitle !== 'string' || !roomTitle.trim() || roomTitle.trim().length > 100) {
       return res.status(400).json({ message: 'Room title is required and must be at most 100 characters.' });
     }
     if (!CATEGORIES.includes(category)) {
       return res.status(400).json({ message: 'Invalid room category' });
     }
+
 
     const seats = Array.from({ length: 25 }, (_, seatIndex) => ({
       seatIndex,
@@ -255,19 +278,20 @@ router.post('/create', auth, async (req, res) => {
       seats,
       isLive: true
     });
-    
+
     // Emit socket event for active rooms update
     const io = req.app.get('io');
     if (io) {
       io.emit('active-rooms-updated', { roomId: room._id, isLive: true });
       io.emit('room_list_updated', { roomId: room._id, isLive: true });
     }
-    
+
     res.status(201).json({ message: 'Room created successfully', room });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
+
 
 router.get('/:roomId', auth, async (req, res) => {
   try {
@@ -279,11 +303,22 @@ router.get('/:roomId', auth, async (req, res) => {
     if (room.bannedUsers.some((userId) => userId.toString() === req.user.id)) {
       return res.status(403).json({ message: 'You are banned from entering this room.' });
     }
+
+    // NEW: Password check — room password qabaate
+    if (room.password) {
+      const password = req.query.password;
+      const isMatch = password && await bcrypt.compare(password, room.password);
+      if (!isMatch) {
+        return res.status(401).json({ message: 'Room password required', requiresPassword: true });
+      }
+    }
+
     res.json(room);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
+
 
 router.post('/:roomId/seat/:seatIndex/take', auth, async (req, res) => {
   try {
@@ -297,6 +332,7 @@ router.post('/:roomId/seat/:seatIndex/take', auth, async (req, res) => {
     if (room.bannedUsers.some((userId) => userId.toString() === req.user.id)) {
       return res.status(403).json({ message: 'You are banned from entering this room.' });
     }
+
 
     const updatedRoom = await Room.findOneAndUpdate(
       {
@@ -324,6 +360,7 @@ router.post('/:roomId/seat/:seatIndex/take', auth, async (req, res) => {
   }
 });
 
+
 router.post('/:roomId/seat/:seatIndex/leave', auth, async (req, res) => {
   try {
     const { roomId, seatIndex: rawSeatIndex } = req.params;
@@ -345,6 +382,7 @@ router.post('/:roomId/seat/:seatIndex/leave', auth, async (req, res) => {
   }
 });
 
+
 router.post('/:roomId/moderate/mute/:seatIndex', auth, isOwnerOrAdmin, async (req, res) => {
   try {
     const seatIndex = Number.parseInt(req.params.seatIndex, 10);
@@ -358,6 +396,7 @@ router.post('/:roomId/moderate/mute/:seatIndex', auth, isOwnerOrAdmin, async (re
   }
 });
 
+
 router.post('/:roomId/moderate/lock/:seatIndex', auth, isOwnerOrAdmin, async (req, res) => {
   try {
     const seatIndex = Number.parseInt(req.params.seatIndex, 10);
@@ -370,6 +409,7 @@ router.post('/:roomId/moderate/lock/:seatIndex', auth, isOwnerOrAdmin, async (re
     res.status(500).json({ message: err.message });
   }
 });
+
 
 router.post('/:roomId/moderate/kick/:userId', auth, isOwnerOrAdmin, async (req, res) => {
   try {
@@ -386,6 +426,7 @@ router.post('/:roomId/moderate/kick/:userId', auth, isOwnerOrAdmin, async (req, 
     res.status(500).json({ message: err.message });
   }
 });
+
 
 router.post('/:roomId/moderate/ban/:userId', auth, isOwnerOrAdmin, async (req, res) => {
   try {
@@ -405,5 +446,6 @@ router.post('/:roomId/moderate/ban/:userId', auth, isOwnerOrAdmin, async (req, r
     res.status(500).json({ message: err.message });
   }
 });
+
 
 module.exports = router;
