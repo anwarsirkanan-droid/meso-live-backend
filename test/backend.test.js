@@ -83,8 +83,8 @@ test('agency owner/member fields and uppercase user roles validate', async () =>
   assert.equal(agent.profilePicture, '');
   assert.equal(agent.isVerified, false);
   assert.equal(agent.isFaceVerified, false);
-  assert.equal(agency.tier, 'D');
-  assert.equal(agency.commissionRate, 0.08);
+  assert.equal(agency.tier, 'E');
+  assert.equal(agency.commissionRate, 0.03);
 
   const host = new Host({ userId, agencyId: roomId });
   assert.equal(host.faceVerified, false);
@@ -98,12 +98,13 @@ test('agency owner/member fields and uppercase user roles validate', async () =>
 
   test('agency commission tiers match the master-spec thresholds and rates', () => {
     assert.deepEqual(AGENCY_TIERS, [
-      { tier: 'D', minimumTeamIncome: 0, rate: 0.08 },
-      { tier: 'C', minimumTeamIncome: 20_000_000, rate: 0.12 },
-      { tier: 'B', minimumTeamIncome: 100_000_000, rate: 0.16 },
-      { tier: 'A', minimumTeamIncome: 500_000_000, rate: 0.18 },
-      { tier: 'S', minimumTeamIncome: 1_500_000_000, rate: 0.2 },
-      { tier: 'S+', minimumTeamIncome: null, rate: 0.21, requiredSLevelAgencies: 2 },
+      { tier: 'E', minimumTeamIncome: 0, rate: 0.03 },
+      { tier: 'D', minimumTeamIncome: 5_000_000, rate: 0.05 },
+      { tier: 'C', minimumTeamIncome: 10_000_000, rate: 0.08 },
+      { tier: 'B', minimumTeamIncome: 30_000_000, rate: 0.10 },
+      { tier: 'A', minimumTeamIncome: 100_000_000, rate: 0.13 },
+      { tier: 'S', minimumTeamIncome: 500_000_000, rate: 0.16 },
+      { tier: 'S+', minimumTeamIncome: null, rate: 0.18, requiredSLevelAgencies: 2, extraSLevelHostBonusRate: 0.01 },
     ]);
   });
 
@@ -412,9 +413,9 @@ test('theme and app settings models validate defaults and theme enums', async ()
 });
 
 test('face verification and invitation models validate status, defaults, and uniqueness', async () => {
-  const verification = new FaceVerification({ userId, faceImage: 'https://example.com/face.png' });
+  const verification = new FaceVerification({ userId, faceImage: 'https://example.com/face.png', deviceId: 'device-12345678' });
   await verification.validate();
-  assert.equal(verification.status, 'PENDING');
+  assert.equal(verification.status, 'PENDING_APPROVAL');
   assert.equal(verification.adminNote, '');
 
   const invitation = new Invitation({ inviterId: userId, inviteCode: 'ABC123' });
@@ -534,7 +535,7 @@ test('face review grants or removes host verification only with the review resul
   Host.findOneAndUpdate = async (...args) => calls.push(['host', ...args]);
 
   try {
-    for (const status of ['VERIFIED', 'REJECTED']) {
+    for (const status of ['APPROVED', 'REJECTED']) {
       calls.length = 0;
       const res = {
         statusCode: 200,
@@ -553,12 +554,12 @@ test('face review grants or removes host verification only with the review resul
         user: { id: userId, role: 'ADMIN' }
       }, res);
 
-      const isVerified = status === 'VERIFIED';
+      const isVerified = status === 'APPROVED';
       assert.equal(res.statusCode, 200);
       assert.deepEqual(calls[0], [
         'user',
-        { _id: userId, role: 'HOST' },
-        { $set: { isVerified, isFaceVerified: isVerified } }
+        { _id: userId },
+        { $set: { isVerified, isFaceVerified: isVerified, isVerifiedHost: isVerified, hostVerificationStatus: status, faceVerificationStatus: status === 'APPROVED' ? 'Approved' : 'Rejected' } }
       ]);
       assert.deepEqual(calls[1], [
         'host',

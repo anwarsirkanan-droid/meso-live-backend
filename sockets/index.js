@@ -1,5 +1,5 @@
 // backend/sockets/index.js
-const { registerRoomSocket } = require('./roomSocket');
+const registerRoomSocket = require('./roomSocket');
 const { registerVoiceSocket } = require('./voiceSocket');
 
 const initializeSockets = (io) => {

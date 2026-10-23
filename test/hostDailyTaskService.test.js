@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
 const HostDailyProgress = require('../models/HostDailyProgress');
+const HostReward = require('../models/HostReward');
 const Transaction = require('../models/Transaction');
 const User = require('../models/User');
 const {
@@ -39,13 +40,19 @@ test('wealth and charm levels expose medal tiers and progress to the next config
 
 test('host task time is split at midnight EAT and crowns only the time in the Crown Mic', async (context) => {
   const originalUpdateOne = HostDailyProgress.updateOne;
+  const originalRewardFindOne = HostReward.findOne;
+  const originalRewardCreate = HostReward.create;
   const updates = [];
   HostDailyProgress.updateOne = async (filter, update) => updates.push({
     date: filter.date,
     increment: update.$inc,
   });
+  HostReward.findOne = async () => null;
+  HostReward.create = async () => ({});
   context.after(() => {
     HostDailyProgress.updateOne = originalUpdateOne;
+    HostReward.findOne = originalRewardFindOne;
+    HostReward.create = originalRewardCreate;
   });
 
   const start = new Date('2026-10-19T20:59:50.000Z');

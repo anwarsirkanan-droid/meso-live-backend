@@ -8,6 +8,7 @@ const router = express.Router();
 const User = require('../models/User');
 const { withProfileMetadata } = require('../services/profileMetadata');
 const auth = require('../middleware/auth');
+const { revokeToken } = require('../services/tokenRevocationService');
 const { JWT_SECRET } = require('../middleware/authMiddleware');
 const { calculateCharmLevel, calculateWealthLevel } = require('../config/levels');
 const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
@@ -88,7 +89,10 @@ router.get('/me', auth, async (req, res) => {
   }
 
   try {
-    const user = await User.findById(req.user.id).select('-password').populate('agencyId', 'name agencyName');
+    const userQuery = User.findById(req.user.id).select('-password');
+    const user = typeof userQuery?.populate === 'function'
+      ? await userQuery.populate('agencyId', 'name agencyName')
+      : await userQuery;
     if (!user) return res.status(404).json({ error: 'User not found.' });
     if (user.publicId == null) await user.save({ validateModifiedOnly: true });
 
@@ -199,22 +203,47 @@ router.post('/register', async (req, res) => {
 // 2. LOGIN API
 router.post('/login', async (req, res) => {
   try {
-    const { username, email, password } = req.body;
-    const loginIdentifier = typeof email === 'string' && email.trim()
-      ? email.trim().toLowerCase()
-      : typeof username === 'string'
-        ? username.trim()
+    const { password } = req.body || {};
+    const identifierCandidates = [
+      req.body?.email,
+      req.body?.username,
+      req.body?.userId,
+      req.body?.publicId,
+      req.body?.identifier,
+      req.body?.login
+    ];
+    const rawIdentifier = identifierCandidates.find((value) =>
+      typeof value === 'string' && value.trim()
+    ) || identifierCandidates.find((value) => Number.isInteger(value));
+    const loginIdentifier = typeof rawIdentifier === 'number'
+      ? String(rawIdentifier)
+      : typeof rawIdentifier === 'string'
+        ? rawIdentifier.trim()
         : '';
+    const normalizedIdentifier = loginIdentifier.includes('@')
+      ? loginIdentifier.toLowerCase()
+      : loginIdentifier;
 
     if (!loginIdentifier || typeof password !== 'string' || !password) {
       return res.status(400).json({ error: 'Email or username and password are required.' });
     }
 
-    const user = await User.findOne(
-      loginIdentifier.includes('@')
-        ? { email: loginIdentifier }
-        : { username: loginIdentifier }
-    );
+    let userQuery;
+    if (normalizedIdentifier.includes('@')) {
+      userQuery = { email: normalizedIdentifier };
+    } else if (/^\d+$/.test(normalizedIdentifier)) {
+      const publicId = Number(normalizedIdentifier);
+      if (!Number.isSafeInteger(publicId)) {
+        return res.status(400).json({ error: 'Invalid user ID.' });
+      }
+      userQuery = { publicId };
+    } else {
+      userQuery = { username: normalizedIdentifier };
+    }
+    const userQueryResult = User.findOne(userQuery);
+    const user = typeof userQueryResult?.select === 'function'
+      ? await userQueryResult.select('+password')
+      : await userQueryResult;
     if (!user) {
       return res.status(400).json({ error: 'Invalid username or password.' });
     }
@@ -345,7 +374,7 @@ router.post('/change-password', auth, async (req, res) => {
   }
 
   try {
-    const user = await User.findById(req.user.id);
+    const user = await User.findById(req.user.id).select('+password');
     if (!user) return res.status(404).json({ error: 'User not found.' });
 
     if (user.password) {
@@ -363,8 +392,18 @@ router.post('/change-password', auth, async (req, res) => {
 });
 
 // 3. LOGOUT API
-router.post('/logout', (req, res) => {
-  res.status(200).json({ message: 'Logged out successfully!' });
+router.post('/logout', auth, async (req, res) => {
+  try {
+    const decoded = jwt.decode(req.token);
+    const expiresAt = decoded?.exp
+      ? new Date(decoded.exp * 1000)
+      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await revokeToken(req.token, expiresAt);
+    return res.status(200).json({ message: 'Logged out successfully!' });
+  } catch (error) {
+    console.error('Could not revoke token during logout:', error);
+    return res.status(503).json({ error: 'Authentication service is unavailable.' });
+  }
 });
 
 module.exports = router;

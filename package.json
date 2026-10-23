@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --env-file-if-exists=.env --test"
   },
   "keywords": [],
   "author": "",

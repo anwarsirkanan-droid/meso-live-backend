@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const Room = require('../models/Room');
+const HostDailyProgress = require('../models/HostDailyProgress');
+const HostReward = require('../models/HostReward');
 const roomSocket = require('../sockets/roomSocket');
 
 const roomId = '507f1f77bcf86cd799439012';
@@ -153,19 +155,32 @@ test('host leave and disconnect mark the room offline and broadcast room status'
     return room;
   };
 
+  const originalHostDailyProgressUpdateOne = HostDailyProgress.updateOne;
+  const originalHostRewardFindOne = HostReward.findOne;
+  const originalHostRewardCreate = HostReward.create;
+  HostDailyProgress.updateOne = async () => ({});
+  HostReward.findOne = async () => null;
+  HostReward.create = async () => ({});
+
+
   Room.findById = async () => room;
   Room.findByIdAndUpdate = (_id, update) => ({
     populate: async () => applyUpdate(update),
   });
-  Room.findOneAndUpdate = async (_filter, update) => {
-    if (room.currentListenersCount <= 0) return null;
-    return applyUpdate(update);
-  };
+  Room.findOneAndUpdate = (_filter, update) => ({
+    populate: async () => {
+      if (room.currentListenersCount <= 0) return null;
+      return applyUpdate(update);
+    },
+  });
 
   context.after(() => {
     Room.findById = originalFindById;
     Room.findByIdAndUpdate = originalFindByIdAndUpdate;
     Room.findOneAndUpdate = originalFindOneAndUpdate;
+    HostDailyProgress.updateOne = originalHostDailyProgressUpdateOne;
+    HostReward.findOne = originalHostRewardFindOne;
+    HostReward.create = originalHostRewardCreate;
   });
 
   const io = {

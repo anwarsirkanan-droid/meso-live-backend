@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const Follow = require('../models/Follow');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
 const Room = require('../models/Room');
@@ -364,6 +365,38 @@ router.put('/update', auth, async (req, res) => {
     return res.status(500).json({ message: err.message });
   }
 });
+
+// Convenience endpoints for the currently authenticated user's follower lists.
+router.get('/followers', auth, async (req, res) => {
+  try {
+    const follows = await Follow.find({ followingId: req.user.id })
+      .sort({ createdAt: -1 })
+      .limit(500)
+      .populate('followerId', 'username avatar isOnline');
+    return res.json(follows.map((follow) => ({
+      ...(follow.followerId?.toObject?.() || {}),
+      createdAt: follow.createdAt,
+    })));
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+router.get('/following', auth, async (req, res) => {
+  try {
+    const follows = await Follow.find({ followerId: req.user.id })
+      .sort({ createdAt: -1 })
+      .limit(500)
+      .populate('followingId', 'username avatar isOnline');
+    return res.json(follows.map((follow) => ({
+      ...(follow.followingId?.toObject?.() || {}),
+      createdAt: follow.createdAt,
+    })));
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
 
 router.get('/:userId', auth, getUserProfile);
 
