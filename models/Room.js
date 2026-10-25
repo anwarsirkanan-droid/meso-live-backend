@@ -104,7 +104,7 @@ const roomSchema = new mongoose.Schema({
 });
 
 // Validate the maximum number of seats.
-roomSchema.pre('save', function () {
+roomSchema.pre('save', async function () {
   if (this.seats && this.seats.length > 25) {
     throw new Error('Room cannot have more than 25 seats');
   }

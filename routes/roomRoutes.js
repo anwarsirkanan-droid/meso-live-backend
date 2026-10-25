@@ -229,7 +229,7 @@ router.get('/all', async (req, res, next) => {
 
 router.post('/create', auth, async (req, res, next) => {
   try {
-    const { title, banner = '', coverPhoto = banner, announcement = '', category = 'For You', region = '', language = '' } = req.body;
+    const { title, banner = '', coverPhoto = banner, announcement = '', notice: requestedNotice, category = 'For You', region = '', language = '' } = req.body;
 
     const currentUser = await User.findById(req.user.id).select('name username');
     const userName = currentUser?.name || currentUser?.username || 'Anwar';
@@ -252,7 +252,7 @@ router.post('/create', auth, async (req, res, next) => {
       ownerId: req.user.id,
       coverPhoto,
       banner,
-      announcement,
+      notice: typeof requestedNotice === 'string' ? requestedNotice : announcement,
       category,
       region: typeof region === 'string' ? region.trim() : '',
       language: typeof language === 'string' ? language.trim() : '',
