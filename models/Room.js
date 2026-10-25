@@ -17,7 +17,7 @@ const roomSchema = new mongoose.Schema({
     default: ''
   },
 
-  // Notice qofa fayyadami.
+  // Room notice.
   notice: {
     type: String,
     default: 'Welcome to the room!',
@@ -42,14 +42,14 @@ const roomSchema = new mongoose.Schema({
     default: ''
   },
 
-  // Mic mode: free ykn apply.
+  // Microphone access mode.
   micMode: {
     type: String,
     enum: ['free', 'apply'],
     default: 'free'
   },
 
-  // Teessota 25 (seatIndex 0 hanga 24).
+  // Maximum of 25 seats, indexed from 0 to 24.
   seats: [{
     seatIndex: {
       type: Number,
@@ -103,8 +103,7 @@ const roomSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Teessota 25 ol akka hin taane mirkaneessi.
-// Mongoose 9 waliin callback next() hin fayyadamnu.
+// Validate the maximum number of seats.
 roomSchema.pre('save', function () {
   if (this.seats && this.seats.length > 25) {
     throw new Error('Room cannot have more than 25 seats');
