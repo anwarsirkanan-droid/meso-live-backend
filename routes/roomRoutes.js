@@ -31,6 +31,8 @@ const serializeRoom = (room) => ({
   } : null,
   title: room.title,
   cover: room.coverPhoto || room.banner,
+  notice: room.notice,
+  announcement: room.notice,
   category: room.category,
   region: room.region || room.ownerId?.region || room.ownerId?.country || '',
   language: room.language || room.ownerId?.language || '',
@@ -130,6 +132,174 @@ const isOwnerOrAdmin = async (req, res, next) => {
     return res.status(500).json({ message: err.message });
   }
 };
+
+// Shared handler for host-authorized room title, cover, and announcement updates.
+async function updateRoomDetails(req, res) {
+  try {
+    if (!isValidId(req.params.roomId)) {
+      return res.status(400).json({ message: 'Invalid room ID' });
+    }
+
+    const room = await Room.findById(req.params.roomId);
+    if (!room) return res.status(404).json({ message: 'Room not found' });
+
+    const userId = String(req.user?.id || req.user?._id || '');
+    const isOwner = Boolean(userId) && room.ownerId?.toString() === userId;
+    let isAuthorized = isOwner;
+
+    if (!isAuthorized) {
+      let role = req.user?.role;
+      if (!role && userId) {
+        try {
+          const user = await User.findById(userId).select('role');
+          role = user?.role;
+        } catch {
+          role = null;
+        }
+      }
+      isAuthorized = role === 'ADMIN' || role === 'MODERATOR' ||
+        (Array.isArray(room.moderators) && room.moderators.some((moderatorId) => moderatorId?.toString() === userId));
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ message: 'Only the room host or an authorized moderator can edit this room.' });
+    }
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const updates = {};
+
+    const titleInput = body.title ?? body.roomTitle ?? body.name ?? body.roomName;
+    if (titleInput !== undefined) {
+      if (typeof titleInput !== 'string') {
+        return res.status(400).json({ message: 'Room title must be a string.' });
+      }
+      const title = titleInput.trim();
+      if (!title) {
+        return res.status(400).json({ message: 'Room title is required.' });
+      }
+      if (title.length > 100) {
+        return res.status(400).json({ message: 'Room title must be at most 100 characters.' });
+      }
+      updates.title = title;
+    }
+
+    const coverInput = body.cover ?? body.coverPhoto ?? body.banner ?? body.roomCover ?? body.image ?? body.coverUrl;
+    if (coverInput !== undefined) {
+      if (typeof coverInput !== 'string') {
+        return res.status(400).json({ message: 'Room cover must be a string.' });
+      }
+      const cover = coverInput.trim();
+      updates.coverPhoto = cover;
+      updates.banner = cover;
+    }
+
+    const announcementInput = body.announcement ?? body.notice ?? body.noticeText ?? body.announcementText ?? body.description;
+    if (announcementInput !== undefined) {
+      if (typeof announcementInput !== 'string') {
+        return res.status(400).json({ message: 'Room announcement must be a string.' });
+      }
+      const notice = announcementInput.trim().slice(0, 300);
+      updates.notice = notice;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ message: 'At least one room field is required.' });
+    }
+
+    Object.assign(room, updates);
+    await room.save();
+
+    let updatedRoom = room;
+    try {
+      const populated = await Room.findById(room._id).populate(roomPopulation);
+      if (populated) updatedRoom = populated;
+    } catch {
+      updatedRoom = room;
+    }
+
+    // Keep frontend-friendly aliases available even for plain mocked room objects.
+    if (updatedRoom && typeof updatedRoom === 'object') {
+      if (updatedRoom.cover === undefined) updatedRoom.cover = room.coverPhoto || room.banner || '';
+      if (updatedRoom.announcement === undefined) updatedRoom.announcement = room.notice;
+      if (updatedRoom.notice === undefined) updatedRoom.notice = room.notice;
+    }
+
+    const io = req.app && typeof req.app.get === 'function' ? req.app.get('io') : null;
+    if (io) {
+      io.to(String(room._id)).emit('room_updated', updatedRoom);
+      io.emit('room_list_updated', {
+        roomId: room._id,
+        title: room.title,
+        cover: room.coverPhoto || room.banner,
+        notice: room.notice,
+        announcement: room.notice,
+        isLive: room.isLive,
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Room updated successfully',
+      room: updatedRoom,
+      updatedRoom,
+      title: room.title,
+      cover: room.coverPhoto || room.banner,
+      coverPhoto: room.coverPhoto,
+      banner: room.banner,
+      notice: room.notice,
+      announcement: room.notice,
+    });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+}
+
+function registerRoomUpdateRoutes(path) {
+  router.put(path, auth, updateRoomDetails);
+  router.patch(path, auth, updateRoomDetails);
+  router.post(path, auth, updateRoomDetails);
+}
+
+// General room editing endpoints.
+registerRoomUpdateRoutes('/:roomId');
+registerRoomUpdateRoutes('/:roomId/update');
+registerRoomUpdateRoutes('/:roomId/settings');
+registerRoomUpdateRoutes('/:roomId/edit');
+registerRoomUpdateRoutes('/:roomId/update-room');
+registerRoomUpdateRoutes('/:roomId/room-settings');
+registerRoomUpdateRoutes('/:roomId/edit-room');
+
+// Field-specific room editing endpoints.
+function registerFieldRoute(path, field) {
+  router.put(path, auth, async (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? { ...req.body } : {};
+    if (body[field] === undefined && body.value !== undefined) body[field] = body.value;
+    if (body[field] === undefined && body.data !== undefined) body[field] = body.data;
+    req.body = body;
+    return updateRoomDetails(req, res);
+  });
+  router.patch(path, auth, async (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? { ...req.body } : {};
+    if (body[field] === undefined && body.value !== undefined) body[field] = body.value;
+    if (body[field] === undefined && body.data !== undefined) body[field] = body.data;
+    req.body = body;
+    return updateRoomDetails(req, res);
+  });
+  router.post(path, auth, async (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? { ...req.body } : {};
+    if (body[field] === undefined && body.value !== undefined) body[field] = body.value;
+    if (body[field] === undefined && body.data !== undefined) body[field] = body.data;
+    req.body = body;
+    return updateRoomDetails(req, res);
+  });
+}
+
+registerFieldRoute('/:roomId/title', 'title');
+registerFieldRoute('/:roomId/cover', 'cover');
+registerFieldRoute('/:roomId/cover-photo', 'cover');
+registerFieldRoute('/:roomId/coverPhoto', 'coverPhoto');
+registerFieldRoute('/:roomId/announcement', 'announcement');
+registerFieldRoute('/:roomId/notice', 'notice');
 
 router.get('/categories', async (req, res, next) => {
   try {
