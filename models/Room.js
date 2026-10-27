@@ -3,7 +3,9 @@ const mongoose = require('mongoose');
 const roomSchema = new mongoose.Schema({
   title: {
     type: String,
-    required: true
+    required: true,
+    trim: true,
+    maxlength: 100
   },
 
   ownerId: {
@@ -98,10 +100,37 @@ const roomSchema = new mongoose.Schema({
   banner: {
     type: String,
     default: ''
-  }
+  },
+
+  // Users explicitly authorized to moderate or edit this room in addition to the host.
+  moderators: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }]
 }, {
-  timestamps: true
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
+
+// Keep the frontend "cover" and "announcement" fields compatible with persisted fields.
+roomSchema.virtual('cover')
+  .get(function getCover() {
+    return this.coverPhoto || this.banner || '';
+  })
+  .set(function setCover(value) {
+    this.coverPhoto = value;
+    this.banner = value;
+  });
+
+// Keep the frontend "announcement" field compatible with the persisted "notice" field.
+roomSchema.virtual('announcement')
+  .get(function getAnnouncement() {
+    return this.notice;
+  })
+  .set(function setAnnouncement(value) {
+    this.notice = value;
+  });
 
 // Validate the maximum number of seats.
 roomSchema.pre('save', async function () {
