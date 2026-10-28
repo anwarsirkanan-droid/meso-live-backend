@@ -29,11 +29,12 @@ const getProfile = async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-password').populate('agencyId', 'name agencyName');
     if (!user) return res.status(404).json({ message: 'User not found' });
-    if (user.publicId == null) await user.save({ validateModifiedOnly: true });
     const profile = withProfileMetadata(user);
     // Ensure roles and publicId are included
     profile.role = user.role;
     profile.publicId = user.publicId;
+    profile.followingCount = Array.isArray(user.following) ? user.following.length : (user.followingCount || 0);
+    profile.followersCount = Array.isArray(user.followers) ? user.followers.length : (user.followersCount || 0);
     return res.json(profile);
   } catch (err) {
     return res.status(500).json({ message: err.message });
@@ -78,6 +79,10 @@ const getUserProfile = async (req, res) => {
     const status = activeRoom && activeRoom.isLive ? 'LIVE' : isOnline ? 'ONLINE' : 'OFFLINE';
     const profile = withProfileMetadata(user);
     delete profile.password;
+    profile.followingCount = Array.isArray(user.following) ? user.following.length : (profile.followingCount || 0);
+    profile.followersCount = Array.isArray(user.followers) ? user.followers.length : (profile.followersCount || 0);
+    profile.avatar = profile.avatar || user.avatar || user.profilePicture || '';
+    profile.profilePicture = profile.profilePicture || user.profilePicture || user.avatar || '';
     return res.json({
       ...profile,
       isOnline,

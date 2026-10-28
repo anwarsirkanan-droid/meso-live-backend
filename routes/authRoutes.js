@@ -79,7 +79,9 @@ function publicUser(user, googleProfile = {}) {
     googleId: user.googleId || null,
     avatar: user.avatar || user.profilePicture || googleProfile.profilePicture || '',
     profilePicture: user.profilePicture || user.avatar || googleProfile.profilePicture || '',
-    profileComplete: user.profileComplete === true
+    profileComplete: user.profileComplete === true,
+    followingCount: Array.isArray(user.following) ? user.following.length : (user.followingCount || 0),
+    followersCount: Array.isArray(user.followers) ? user.followers.length : (user.followersCount || 0),
   };
 }
 
@@ -94,12 +96,13 @@ router.get('/me', auth, async (req, res) => {
       ? await userQuery.populate('agencyId', 'name agencyName')
       : await userQuery;
     if (!user) return res.status(404).json({ error: 'User not found.' });
-    if (user.publicId == null) await user.save({ validateModifiedOnly: true });
 
     const profile = withProfileMetadata(user);
     delete profile.password;
     profile.id = profile.id || profile._id;
     profile.profileComplete = profile.profileComplete === true;
+    profile.followingCount = Array.isArray(user.following) ? user.following.length : (profile.followingCount || 0);
+    profile.followersCount = Array.isArray(user.followers) ? user.followers.length : (profile.followersCount || 0);
     profile.wealthLevel = calculateWealthLevel(profile.totalRechargedCoins);
     profile.charmLevel = calculateCharmLevel(profile.charmPoints);
     return res.json({ user: profile });
@@ -265,8 +268,13 @@ router.post('/login', async (req, res) => {
       token,
       user: {
         id: user._id,
+        publicId: user.publicId,
         username: user.username,
-        profileComplete: user.profileComplete === true
+        profileComplete: user.profileComplete === true,
+        avatar: user.avatar || user.profilePicture || '',
+        profilePicture: user.profilePicture || user.avatar || '',
+        followingCount: Array.isArray(user.following) ? user.following.length : (user.followingCount || 0),
+        followersCount: Array.isArray(user.followers) ? user.followers.length : (user.followersCount || 0),
       }
     });
   } catch (err) {

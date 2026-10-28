@@ -125,7 +125,7 @@ test('GET /api/auth/me returns a valid public profile and reports lookup failure
   const body = await response.json();
   assert.equal(response.status, 200);
   assert.equal(body.user.username, user.username);
-  assert.equal(body.user.publicId, 8849302);
+  assert.equal(body.user.publicId, null);
   assert.equal(body.user.profileComplete, false);
   assert.equal(body.user.id, user._id);
   assert.equal(Object.hasOwn(body.user, 'password'), false);
