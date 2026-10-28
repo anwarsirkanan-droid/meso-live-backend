@@ -4,6 +4,7 @@ const Withdrawal = require('../models/Withdrawal');
 const Transaction = require('../models/Transaction');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
+const { requireAdmin } = require('../middleware/adminAuth');
 const {
   DIAMONDS_PER_USD,
   HOST_WITHDRAWAL_MINIMUM_DIAMONDS,
@@ -91,7 +92,7 @@ router.get('/mine', auth, async (req, res) => {
   }
 });
 
-router.get('/admin/requests', auth, async (req, res) => {
+router.get('/admin/requests', auth, requireAdmin, async (req, res) => {
   try {
     const admin = await User.findById(req.user.id).select('role');
     if (!admin || admin.role !== 'ADMIN') {
@@ -111,7 +112,7 @@ router.get('/admin/requests', auth, async (req, res) => {
   }
 });
 
-router.patch('/admin/:withdrawalId', auth, async (req, res) => {
+router.patch('/admin/:withdrawalId', auth, requireAdmin, async (req, res) => {
   const { action, adminNote = '' } = req.body || {};
   if (!['APPROVE', 'REJECT', 'PAID'].includes(action)) {
     return res.status(400).json({ message: 'action must be APPROVE, REJECT, or PAID.' });

@@ -11,6 +11,7 @@ const HostTarget = require('../models/HostTarget');
 const HostDailyProgress = require('../models/HostDailyProgress');
 const Transaction = require('../models/Transaction');
 const auth = require('../middleware/auth');
+const { requireAdmin } = require('../middleware/adminAuth');
 const commissionConfig = require('../config/commission');
 const {
   getAgencyCenter,
@@ -37,18 +38,6 @@ function parseAgentProof(req, res, next) {
     if (error) return res.status(400).json({ message: error.message || 'Could not upload proof image.' });
     return next();
   });
-}
-
-async function requireAdmin(req, res, next) {
-  try {
-    const user = await User.findById(req.user.id).select('role');
-    if (!user || user.role !== 'ADMIN') {
-      return res.status(403).json({ message: 'Only MESO LIVE admins can review these applications.' });
-    }
-    return next();
-  } catch (error) {
-    return res.status(500).json({ message: 'Could not verify admin access.' });
-  }
 }
 
 async function currentAgentAgency(userId) {

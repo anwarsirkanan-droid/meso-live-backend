@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const AppSettings = require('../models/AppSettings');
 const { verifyToken } = require('../middleware/authMiddleware');
+const { requireAdmin } = require('../middleware/adminAuth');
 
 const SETTINGS_ID = '000000000000000000000001';
 const EDITABLE_FIELDS = ['appName', 'appLogo', 'splashScreen', 'welcomeMessage'];
@@ -19,12 +20,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.put('/', verifyToken, async (req, res) => {
+router.put('/', verifyToken, requireAdmin, async (req, res) => {
   try {
-    if (req.user.role !== 'ADMIN') {
-      return res.status(403).json({ message: 'Admin access required' });
-    }
-
     const body = req.body || {};
     const updates = {};
     for (const field of EDITABLE_FIELDS) {

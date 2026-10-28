@@ -5,6 +5,7 @@ const FaceVerification = require('../models/FaceVerification');
 const User = require('../models/User');
 const Host = require('../models/Host');
 const { verifyToken } = require('../middleware/authMiddleware');
+const { requireAdminOrAgent } = require('../middleware/adminAuth');
 const { validateFaceImage } = require('../services/faceValidationService');
 
 // TODO: Real face-match AI (AWS Rekognition/Face++) can be added later via adapter pattern
@@ -73,11 +74,8 @@ router.get('/status', verifyToken, async (req, res) => {
   }
 });
 
-router.get('/pending', verifyToken, async (req, res) => {
+router.get('/pending', verifyToken, requireAdminOrAgent, async (req, res) => {
   try {
-    if (req.user.role !== 'ADMIN' && req.user.role !== 'AGENT' && req.user.isAgent !== true) {
-      return res.status(403).json({ message: 'Admin or Agent access required' });
-    }
     const verifications = await FaceVerification.find({ status: 'PENDING_APPROVAL' })
       .populate('userId', 'publicId username name avatar profilePicture role hostVerificationStatus')
       .sort({ createdAt: 1 });
@@ -87,11 +85,8 @@ router.get('/pending', verifyToken, async (req, res) => {
   }
 });
 
-router.put('/:id/review', verifyToken, async (req, res) => {
+router.put('/:id/review', verifyToken, requireAdminOrAgent, async (req, res) => {
   try {
-    if (req.user.role !== 'ADMIN' && req.user.role !== 'AGENT' && req.user.isAgent !== true) {
-      return res.status(403).json({ message: 'Admin or Agent access required' });
-    }
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ message: 'Invalid verification ID' });
     }

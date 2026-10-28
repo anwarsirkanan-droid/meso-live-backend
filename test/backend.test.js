@@ -548,7 +548,7 @@ test('face review grants or removes host verification only with the review resul
           return this;
         }
       };
-      await route.route.stack[1].handle({
+      await route.route.stack[2].handle({
         params: { id: verificationId },
         body: { status },
         user: { id: userId, role: 'ADMIN' }
