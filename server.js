@@ -65,7 +65,8 @@ const routeMounts = [
   ['/api/leaderboard', './routes/leaderboardRoutes'],
   ['/api/live', './routes/liveStatusRoutes'],
   ['/api/user/theme', './routes/themeRoutes'],
-  ['/api/app-settings', './routes/appSettingsRoutes'],
+  ['/api/policy', './routes/policyRoutes'],
+  ['/api/policies', './routes/policyRoutes'],
 ];
 
 for (const [path, routerPath] of routeMounts) {
