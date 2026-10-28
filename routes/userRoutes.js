@@ -70,12 +70,12 @@ const getUserProfile = async (req, res) => {
     const user = await resolveUser(req.params.userId);
     if (!user) return res.status(404).json({ message: 'User not found.' });
 
-    const activeRoom = await Room.findOne({ ownerId: user._id, isLive: true })
+    const activeRoom = await Room.findOne({ ownerId: user._id })
       .sort({ updatedAt: -1 })
-      .select('_id title coverPhoto banner');
+      .select('_id title coverPhoto banner isLive');
     const lastSeenAt = user.lastSeen ? new Date(user.lastSeen).getTime() : 0;
     const isOnline = user.isOnline === true || (lastSeenAt > Date.now() - 5 * 60 * 1000);
-    const status = activeRoom ? 'LIVE' : isOnline ? 'ONLINE' : 'OFFLINE';
+    const status = activeRoom && activeRoom.isLive ? 'LIVE' : isOnline ? 'ONLINE' : 'OFFLINE';
     const profile = withProfileMetadata(user);
     delete profile.password;
     return res.json({
@@ -131,11 +131,15 @@ router.post('/:userId/follow', auth, async (req, res) => {
 
     await Promise.all([currentUser.save({ validateModifiedOnly: true }), targetUser.save({ validateModifiedOnly: true })]);
 
-    await Follow.updateOne(
-      { followerId: currentUser._id, followingId: targetUser._id },
-      { $setOnInsert: { followerId: currentUser._id, followingId: targetUser._id } },
-      { upsert: true, session }
-    );
+    try {
+      await Follow.updateOne(
+        { followerId: currentUser._id, followingId: targetUser._id },
+        { $setOnInsert: { followerId: currentUser._id, followingId: targetUser._id } },
+        { upsert: true }
+      );
+    } catch (followError) {
+      if (followError.code !== 11000) throw followError;
+    }
 
     await Notification.create({
       userId: targetUser._id,
@@ -188,7 +192,7 @@ router.post('/:userId/unfollow', auth, async (req, res) => {
 
     await Promise.all([currentUser.save({ validateModifiedOnly: true }), targetUser.save({ validateModifiedOnly: true })]);
 
-    await Follow.deleteOne({ followerId: currentUser._id, followingId: targetUser._id }, { session });
+    await Follow.deleteOne({ followerId: currentUser._id, followingId: targetUser._id });
 
     return res.json({ message: 'User unfollowed successfully' });
   } catch (err) {
@@ -374,15 +378,17 @@ router.put('/update', auth, async (req, res) => {
   }
 });
 
-// Convenience endpoints for the currently authenticated user's follower lists.
 router.get('/followers', auth, async (req, res) => {
   try {
+    const currentUser = await User.findById(req.user.id).select('following').lean();
+    const followingSet = new Set((currentUser?.following || []).map((id) => String(id)));
     const follows = await Follow.find({ followingId: req.user.id })
       .sort({ createdAt: -1 })
       .limit(500)
-      .populate('followerId', 'username avatar isOnline');
+      .populate('followerId', 'username avatar isOnline publicId');
     return res.json(follows.map((follow) => ({
       ...(follow.followerId?.toObject?.() || {}),
+      isFollowing: followingSet.has(String(follow.followerId?._id || follow.followerId)),
       createdAt: follow.createdAt,
     })));
   } catch (err) {
@@ -395,9 +401,10 @@ router.get('/following', auth, async (req, res) => {
     const follows = await Follow.find({ followerId: req.user.id })
       .sort({ createdAt: -1 })
       .limit(500)
-      .populate('followingId', 'username avatar isOnline');
+      .populate('followingId', 'username avatar isOnline publicId');
     return res.json(follows.map((follow) => ({
       ...(follow.followingId?.toObject?.() || {}),
+      isFollowing: true,
       createdAt: follow.createdAt,
     })));
   } catch (err) {

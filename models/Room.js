@@ -14,6 +14,9 @@ const roomSchema = new mongoose.Schema({
     required: true
   },
 
+  // Public numeric room ID aligned with the host's public user ID when available.
+  publicId: { type: Number, unique: true, sparse: true },
+
   coverPhoto: {
     type: String,
     default: ''

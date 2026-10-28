@@ -9,6 +9,23 @@ const auth = require('../middleware/auth');
 
 const CATEGORIES = ['Follow', 'Party', 'For You', 'Ethiopia', 'Rank'];
 const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
+const isObjectIdString = (value) => typeof value === 'string' && value.length === 24 && mongoose.Types.ObjectId.isValid(value);
+
+async function findRoomByIdentifier(identifier) {
+  const value = String(identifier || '').trim();
+  if (!value) return null;
+  if (isObjectIdString(value)) {
+    return Room.findById(value);
+  }
+  const numericId = Number(value);
+  if (Number.isInteger(numericId)) {
+    const owner = await User.findOne({ publicId: numericId }).select('_id').lean();
+    if (owner) {
+      return Room.findOne({ ownerId: owner._id });
+    }
+  }
+  return null;
+}
 const roomPopulation = [
   { path: 'ownerId', select: 'username avatar country region language publicId role' },
   { path: 'seats.userId', select: 'username avatar charmPoints' }
@@ -113,10 +130,12 @@ async function getFilteredRooms(req, res, next) {
 
 const isOwnerOrAdmin = async (req, res, next) => {
   try {
-    if (!isValidId(req.params.roomId)) {
+    const param = req.params.roomId;
+    const isNumericRoomId = Number.isInteger(Number(param)) && !isValidId(param);
+    if (!isValidId(param) && !isNumericRoomId) {
       return res.status(400).json({ message: 'Invalid room ID' });
     }
-    const room = await Room.findById(req.params.roomId);
+    const room = await findRoomByIdentifier(param);
     if (!room) return res.status(404).json({ message: 'Room not found' });
 
     const user = await User.findById(req.user.id).select('role');
@@ -136,11 +155,13 @@ const isOwnerOrAdmin = async (req, res, next) => {
 // Shared handler for host-authorized room title, cover, and announcement updates.
 async function updateRoomDetails(req, res) {
   try {
-    if (!isValidId(req.params.roomId)) {
+    const param = req.params.roomId;
+    const isNumericRoomId = Number.isInteger(Number(param)) && !isValidId(param);
+    if (!isValidId(param) && !isNumericRoomId) {
       return res.status(400).json({ message: 'Invalid room ID' });
     }
 
-    const room = await Room.findById(req.params.roomId);
+    const room = await findRoomByIdentifier(param);
     if (!room) return res.status(404).json({ message: 'Room not found' });
 
     const userId = String(req.user?.id || req.user?._id || '');
@@ -385,7 +406,7 @@ router.post('/create', auth, async (req, res, next) => {
   try {
     const { title, banner = '', coverPhoto = banner, announcement = '', notice: requestedNotice, category = 'For You', region = '', language = '' } = req.body;
 
-    const currentUser = await User.findById(req.user.id).select('name username');
+    const currentUser = await User.findById(req.user.id).select('name username publicId');
     const userName = currentUser?.name || currentUser?.username || 'Anwar';
     const roomTitle = title && title.trim() ? title.trim() : `${userName}'s Live Room`;
 
@@ -398,6 +419,10 @@ router.post('/create', auth, async (req, res, next) => {
 
     const existingRoom = await Room.findOne({ ownerId: req.user.id }).populate(roomPopulation);
     if (existingRoom) {
+      if (existingRoom.publicId == null && currentUser?.publicId != null) {
+        existingRoom.publicId = currentUser.publicId;
+        await existingRoom.save();
+      }
       existingRoom.isLive = true;
       await existingRoom.save();
       const io = typeof req.app?.get === 'function' ? req.app.get('io') : null;
@@ -405,7 +430,7 @@ router.post('/create', auth, async (req, res, next) => {
         io.emit('active-rooms-updated', { roomId: existingRoom._id, isLive: true });
         io.emit('room_list_updated', { roomId: existingRoom._id, isLive: true });
       }
-      return res.status(200).json({ message: 'Room already exists', room: existingRoom, roomId: existingRoom._id });
+      return res.status(200).json({ message: 'Room already exists', room: existingRoom, roomId: existingRoom._id, publicId: existingRoom.publicId });
     }
 
     const seats = Array.from({ length: 25 }, (_, seatIndex) => ({
@@ -416,6 +441,7 @@ router.post('/create', auth, async (req, res, next) => {
     const room = await Room.create({
       title: roomTitle,
       ownerId: req.user.id,
+      publicId: currentUser?.publicId,
       coverPhoto,
       banner,
       notice: typeof requestedNotice === 'string' ? requestedNotice : announcement,
@@ -467,11 +493,16 @@ registerFieldRoute('/:roomId/notice', 'notice');
 
 router.get('/:roomId', auth, async (req, res, next) => {
   try {
-    if (!isValidId(req.params.roomId)) {
+    const param = req.params.roomId;
+    const isNumericRoomId = Number.isInteger(Number(param)) && !isValidId(param);
+    if (!isValidId(param) && !isNumericRoomId) {
       return res.status(400).json({ message: 'Invalid room ID' });
     }
-    const room = await Room.findById(req.params.roomId).populate(roomPopulation);
+    let room = await findRoomByIdentifier(param);
     if (!room) return res.status(404).json({ message: 'Room not found' });
+    if (typeof room.populate === 'function') {
+      try { await room.populate(roomPopulation); } catch { /* ignore */ }
+    }
     if (room.bannedUsers.some((userId) => userId.toString() === req.user.id)) {
       return res.status(403).json({ message: 'You are banned from entering this room.' });
     }
