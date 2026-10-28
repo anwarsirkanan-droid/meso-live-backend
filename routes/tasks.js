@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Task = require('../models/Task');
 const UserTaskProgress = require('../models/UserTaskProgress');
 const HostReward = require('../models/HostReward');
+const Transaction = require('../models/Transaction');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
@@ -18,16 +19,19 @@ const DEFAULT_TASKS = [
 ];
 
 const HOST_LEVELS = [
-  { level: 'S', targetHours: 70, rewardPerHour: 0.9, maxHours: 100, totalReward: 90 },
-  { level: 'A', targetHours: 56, rewardPerHour: 0.8, maxHours: 80, totalReward: 64 },
-  { level: 'B', targetHours: 42, rewardPerHour: 0.7, maxHours: 60, totalReward: 42 },
-  { level: 'C', targetHours: 28, rewardPerHour: 0.6, maxHours: 40, totalReward: 24 },
-  { level: 'D', targetHours: 21, rewardPerHour: 0.5, maxHours: 30, totalReward: 15 },
-  { level: 'E', targetHours: 14, rewardPerHour: 0.4, maxHours: 20, totalReward: 8 },
-  { level: 'F', targetHours: 7, rewardPerHour: 0.3, maxHours: 10, totalReward: 3 },
-  { level: 'G', targetHours: 4, rewardPerHour: 0.2, maxHours: 7, totalReward: 1.4 },
-  { level: 'H', targetHours: 2, rewardPerHour: 0.1, maxHours: 4, totalReward: 0.4 },
-  { level: 'I', targetHours: 1, rewardPerHour: 0.05, maxHours: 2, totalReward: 0.1 }
+  { level: 'S', qualifyingPoints: 500000000, rewardPerHour: 2000000, maxHours: 3 },
+  { level: 'A', qualifyingPoints: 200000000, rewardPerHour: 1000000, maxHours: 3 },
+  { level: 'B', qualifyingPoints: 100000000, rewardPerHour: 500000, maxHours: 3 },
+  { level: 'C', qualifyingPoints: 70000000, rewardPerHour: 350000, maxHours: 3 },
+  { level: 'D', qualifyingPoints: 40000000, rewardPerHour: 300000, maxHours: 3 },
+  { level: 'E', qualifyingPoints: 20000000, rewardPerHour: 150000, maxHours: 3 },
+  { level: 'F', qualifyingPoints: 12000000, rewardPerHour: 120000, maxHours: 3 },
+  { level: 'G', qualifyingPoints: 9000000, rewardPerHour: 90000, maxHours: 3 },
+  { level: 'H', qualifyingPoints: 3000000, rewardPerHour: 45000, maxHours: 2 },
+  { level: 'I', qualifyingPoints: 1500000, rewardPerHour: 30000, maxHours: 2 },
+  { level: 'J', qualifyingPoints: 1000000, rewardPerHour: 20000, maxHours: 2 },
+  { level: 'K', qualifyingPoints: 500000, rewardPerHour: 12000, maxHours: 2 },
+  { level: 'L', qualifyingPoints: 0, rewardPerHour: 6000, maxHours: 1 },
 ];
 
 async function ensureDefaultTasks() {
@@ -125,6 +129,35 @@ router.get('/', auth, async (req, res) => {
       response.hostRewards = { ...hostRewards.toObject(), ...getRewardDetails(hostRewards) };
       response.hostLevels = HOST_LEVELS;
       response.hostRewardsUnlocked = true;
+      // Eligible Gift Points for Host Task Levels: sum of GIFT_RECEIVED transaction amountCoins in the last 7 days.
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const giftAgg = await Transaction.aggregate([
+        { $match: { userId: user._id, type: 'GIFT_RECEIVED', createdAt: { $gte: sevenDaysAgo } } },
+        { $group: { _id: null, total: { $sum: '$amountCoins' } } },
+      ]);
+      const weeklyGiftPoints = (giftAgg[0] && Number.isFinite(giftAgg[0].total)) ? giftAgg[0].total : 0;
+      response.weeklyGiftPoints = weeklyGiftPoints;
+      // Determine current level from the verified HOST_LEVELS table (sorted descending by qualifyingPoints).
+      let currentIndex = HOST_LEVELS.length - 1;
+      for (let i = 0; i < HOST_LEVELS.length; i++) {
+        if (weeklyGiftPoints >= HOST_LEVELS[i].qualifyingPoints) { currentIndex = i; break; }
+      }
+      const currentLevel = HOST_LEVELS[currentIndex];
+      const nextLevel = currentIndex > 0 ? HOST_LEVELS[currentIndex - 1] : null;
+      let progress = 0;
+      if (nextLevel) {
+        const span = nextLevel.qualifyingPoints - currentLevel.qualifyingPoints;
+        progress = span > 0 ? Math.min(100, Math.max(0, ((weeklyGiftPoints - currentLevel.qualifyingPoints) / span) * 100)) : 100;
+      } else {
+        progress = 100;
+      }
+      response.currentLevel = currentLevel.level;
+      response.currentGiftPoints = weeklyGiftPoints;
+      response.nextLevel = nextLevel ? nextLevel.level : null;
+      response.nextThreshold = nextLevel ? nextLevel.qualifyingPoints : null;
+      response.levelProgress = Math.round(progress);
+      response.levelRewardPerHour = currentLevel.rewardPerHour;
+      response.levelMaxHours = currentLevel.maxHours;
     }
     return res.json(response);
   } catch (error) {
