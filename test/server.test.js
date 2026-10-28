@@ -226,13 +226,13 @@ test('CORS allows the deployed frontend origin', async (context) => {
   const response = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/login`, {
     method: 'OPTIONS',
     headers: {
-      Origin: 'https://meso-live-frontend.onrender.com',
+      Origin: 'https://meso-live-v2.onrender.com',
       'Access-Control-Request-Method': 'POST',
       'Access-Control-Request-Headers': 'content-type',
     },
   });
 
-  assert.equal(response.headers.get('access-control-allow-origin'), 'https://meso-live-frontend.onrender.com');
+  assert.equal(response.headers.get('access-control-allow-origin'), 'https://meso-live-v2.onrender.com');
 });
 
 test('Agency Center endpoints require authentication', async (context) => {
@@ -720,3 +720,4 @@ test('PUT /api/users/profile rejects a username already owned by another account
   assert.equal(response.status, 400);
   assert.equal(body.message, 'That username is already taken.');
 });
+

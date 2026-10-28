@@ -10,7 +10,7 @@ const { authenticateToken } = require('./middleware/authMiddleware');
 const { initializeSockets } = require('./sockets');
 
 const app = express();
-const DEFAULT_CORS_ORIGIN = 'https://meso-live-frontend.onrender.com';
+const DEFAULT_CORS_ORIGIN = 'https://meso-live-v2.onrender.com';
 const allowedOrigins = (process.env.CORS_ORIGINS || DEFAULT_CORS_ORIGIN)
   .split(',')
   .map((origin) => origin.trim())
