@@ -396,6 +396,18 @@ router.post('/create', auth, async (req, res, next) => {
       return res.status(400).json({ message: 'Invalid room category' });
     }
 
+    const existingRoom = await Room.findOne({ ownerId: req.user.id }).populate(roomPopulation);
+    if (existingRoom) {
+      existingRoom.isLive = true;
+      await existingRoom.save();
+      const io = typeof req.app?.get === 'function' ? req.app.get('io') : null;
+      if (io) {
+        io.emit('active-rooms-updated', { roomId: existingRoom._id, isLive: true });
+        io.emit('room_list_updated', { roomId: existingRoom._id, isLive: true });
+      }
+      return res.status(200).json({ message: 'Room already exists', room: existingRoom, roomId: existingRoom._id });
+    }
+
     const seats = Array.from({ length: 25 }, (_, seatIndex) => ({
       seatIndex,
       ...(seatIndex === 0 ? { userId: req.user.id } : {}),
@@ -424,10 +436,17 @@ router.post('/create', auth, async (req, res, next) => {
 
     res.status(201).json({ message: 'Room created successfully', room: populatedRoom });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    if (err && err.code === 11000) {
+      const existingRoom = await Room.findOne({ ownerId: req.user.id }).populate(roomPopulation);
+      if (existingRoom) {
+        existingRoom.isLive = true;
+        await existingRoom.save();
+        return res.status(200).json({ message: 'Room already exists', room: existingRoom, roomId: existingRoom._id });
+      }
+    }
+    return res.status(500).json({ message: err.message });
   }
 });
-
 
 // General room editing endpoints.
 registerRoomUpdateRoutes('/:roomId');

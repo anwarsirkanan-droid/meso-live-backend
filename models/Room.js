@@ -139,4 +139,6 @@ roomSchema.pre('save', async function () {
   }
 });
 
+roomSchema.index({ ownerId: 1 }, { unique: true });
+
 module.exports = mongoose.model('Room', roomSchema);
