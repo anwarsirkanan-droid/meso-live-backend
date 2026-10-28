@@ -131,6 +131,12 @@ router.post('/:userId/follow', auth, async (req, res) => {
 
     await Promise.all([currentUser.save({ validateModifiedOnly: true }), targetUser.save({ validateModifiedOnly: true })]);
 
+    await Follow.updateOne(
+      { followerId: currentUser._id, followingId: targetUser._id },
+      { $setOnInsert: { followerId: currentUser._id, followingId: targetUser._id } },
+      { upsert: true, session }
+    );
+
     await Notification.create({
       userId: targetUser._id,
       type: 'FOLLOW',
@@ -181,6 +187,8 @@ router.post('/:userId/unfollow', auth, async (req, res) => {
     targetUser.followersCount = targetUser.followers.length;
 
     await Promise.all([currentUser.save({ validateModifiedOnly: true }), targetUser.save({ validateModifiedOnly: true })]);
+
+    await Follow.deleteOne({ followerId: currentUser._id, followingId: targetUser._id }, { session });
 
     return res.json({ message: 'User unfollowed successfully' });
   } catch (err) {
