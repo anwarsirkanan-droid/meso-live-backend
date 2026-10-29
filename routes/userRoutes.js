@@ -6,6 +6,7 @@ const Notification = require('../models/Notification');
 const Room = require('../models/Room');
 const auth = require('../middleware/auth');
 const mongoose = require('mongoose');
+const { requireAdmin } = require('../middleware/adminAuth');
 const { withProfileMetadata } = require('../services/profileMetadata');
 const { createRateLimiter } = require('../middleware/rateLimit');
 const uploadRateLimit = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 30, message: 'Too many upload requests. Please try again later.' });
@@ -420,6 +421,20 @@ router.get('/following', auth, async (req, res) => {
   }
 });
 
+
+router.get('/admin/summary', auth, requireAdmin, async (req, res) => {
+  try {
+    const totalUsers = await User.countDocuments();
+    const recentUsers = await User.find()
+      .select('publicId username name email role isHost isAgent createdAt')
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+    return res.json({ totalUsers, users: recentUsers });
+  } catch (err) {
+    return res.status(500).json({ message: err.message || 'Could not load user summary.' });
+  }
+});
 
 router.get('/:userId', auth, getUserProfile);
 
