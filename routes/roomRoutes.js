@@ -210,6 +210,22 @@ async function updateRoomDetails(req, res) {
         return res.status(400).json({ message: 'Room cover must be a string.' });
       }
       const cover = coverInput.trim();
+      if (cover.startsWith('data:')) {
+        const match = cover.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/);
+        if (!match) return res.status(400).json({ message: 'Room cover must be a JPEG, PNG, or WebP image.' });
+        const image = Buffer.from(match[2], 'base64');
+        if (image.length > 5 * 1024 * 1024 || image.toString('base64') !== match[2]) {
+          return res.status(400).json({ message: 'Room cover must be smaller than 5 MB.' });
+        }
+        const isJpeg = match[1] === 'jpeg' && image[0] === 0xff && image[1] === 0xd8 && image[2] === 0xff;
+        const isPng = match[1] === 'png' && image.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+        const isWebp = match[1] === 'webp' && image.toString('ascii', 0, 4) === 'RIFF' && image.toString('ascii', 8, 12) === 'WEBP';
+        if (!isJpeg && !isPng && !isWebp) {
+          return res.status(400).json({ message: 'Room cover image data is invalid.' });
+        }
+      } else if (cover.length > 2048) {
+        return res.status(400).json({ message: 'Room cover URL is too long.' });
+      }
       updates.coverPhoto = cover;
       updates.banner = cover;
     }
