@@ -277,6 +277,7 @@ router.post('/apply', auth, parseAgentProof, async (req, res) => {
     const application = await AgencyApplication.create({
       applicantId: host._id,
       agencyId: agency._id,
+      targetAgencyId: agency._id,
       applicationType: 'HOST',
       phoneNumber,
       status: 'PENDING',
@@ -293,7 +294,11 @@ router.get('/requests', auth, requireRole('AGENT'), async (req, res) => {
     const agent = await User.findById(req.user.id).select('agencyId');
     const agency = agent?.agencyId ? await Agency.findById(agent.agencyId).select('_id') : await Agency.findOne({ ownerId: req.user.id }).select('_id');
     if (!agency) return res.status(404).json({ message: 'Agency not found.' });
-    const applications = await AgencyApplication.find({ agencyId: agency._id, applicationType: { $in: ['HOST', 'EXIT'] }, status: 'PENDING' })
+    const applications = await AgencyApplication.find({
+      $or: [{ agencyId: agency._id }, { targetAgencyId: agency._id }],
+      applicationType: { $in: ['HOST', 'EXIT'] },
+      status: 'PENDING',
+    })
       .populate('applicantId', 'publicId username name avatar profilePicture phoneNumber')
       .sort({ createdAt: -1 });
     return res.json({ applications });
@@ -311,7 +316,7 @@ router.post('/approve', auth, requireRole('AGENT'), async (req, res) => {
     if (!agency) return res.status(404).json({ message: 'Agency not found.' });
     const application = await AgencyApplication.findOne({
       _id: applicationId,
-      agencyId: agency._id,
+      $or: [{ agencyId: agency._id }, { targetAgencyId: agency._id }],
       applicationType: { $in: ['HOST', 'EXIT'] },
       status: 'PENDING',
     });
@@ -347,7 +352,7 @@ router.post('/reject', auth, requireRole('AGENT'), async (req, res) => {
     const agent = await User.findById(req.user.id).select('agencyId');
     const agency = agent?.agencyId ? await Agency.findById(agent.agencyId).select('_id') : await Agency.findOne({ ownerId: req.user.id }).select('_id');
     const application = agency && await AgencyApplication.findOneAndUpdate(
-      { _id: applicationId, agencyId: agency._id, applicationType: { $in: ['HOST', 'EXIT'] }, status: 'PENDING' },
+      { _id: applicationId, $or: [{ agencyId: agency._id }, { targetAgencyId: agency._id }], applicationType: { $in: ['HOST', 'EXIT'] }, status: 'PENDING' },
       { $set: { status: 'REJECTED', reviewedBy: req.user.id, reviewedAt: new Date() } },
       { new: true }
     );
