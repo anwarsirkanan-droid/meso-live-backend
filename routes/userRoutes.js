@@ -330,8 +330,8 @@ router.put('/avatar', auth, async (req, res) => {
   }
 
   const image = Buffer.from(match[2], 'base64');
-  if (image.length > 600 * 1024 || image.toString('base64') !== match[2]) {
-    return res.status(400).json({ message: 'Avatar image must be smaller than 600 KB.' });
+  if (image.length > 5 * 1024 * 1024 || image.toString('base64') !== match[2]) {
+    return res.status(400).json({ message: 'Avatar image must be smaller than 5 MB.' });
   }
 
   const isJpeg = match[1] === 'jpeg' && image[0] === 0xff && image[1] === 0xd8 && image[2] === 0xff;
