@@ -9,7 +9,14 @@ const { connectToMongo } = require('./config/database');
 const { authenticateToken } = require('./middleware/authMiddleware');
 const { initializeSockets } = require('./sockets');
 
+const { createRateLimiter } = require('./middleware/rateLimit');
+const authRateLimit = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 20, message: 'Too many authentication attempts. Please try again later.' });
+const uploadRateLimit = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 30, message: 'Too many upload requests. Please try again later.' });
+const searchRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 60, message: 'Too many search requests. Please try again later.' });
+
 const app = express();
+app.set('trust proxy', 1);
+
 const DEFAULT_CORS_ORIGIN = 'https://meso-live-v2.onrender.com';
 const allowedOrigins = (process.env.CORS_ORIGINS || DEFAULT_CORS_ORIGIN)
   .split(',')
@@ -70,7 +77,16 @@ const routeMounts = [
 ];
 
 for (const [path, routerPath] of routeMounts) {
-  app.use(path, require(routerPath));
+  const router = require(routerPath);
+  if (path === '/api/auth') {
+    app.use(path, authRateLimit, router);
+  } else if (path === '/api/search') {
+    app.use(path, searchRateLimit, router);
+  } else if (path === '/api/agencies' || path === '/api/agency') {
+    app.use(path, uploadRateLimit, router);
+  } else {
+    app.use(path, router);
+  }
 }
 
 app.use((err, req, res, next) => {

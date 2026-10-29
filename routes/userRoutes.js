@@ -7,6 +7,9 @@ const Room = require('../models/Room');
 const auth = require('../middleware/auth');
 const mongoose = require('mongoose');
 const { withProfileMetadata } = require('../services/profileMetadata');
+const { createRateLimiter } = require('../middleware/rateLimit');
+const uploadRateLimit = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 30, message: 'Too many upload requests. Please try again later.' });
+const searchRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 60, message: 'Too many search requests. Please try again later.' });
 
 const publicUserFields = '-password -googleId';
 const resolveUser = (userId) => {
@@ -44,7 +47,7 @@ const getProfile = async (req, res) => {
 router.get('/me', auth, getProfile);
 router.get('/profile', auth, getProfile);
 
-router.get('/search', auth, async (req, res) => {
+router.get('/search', auth, searchRateLimit, async (req, res) => {
   const rawQuery = typeof req.query.q === 'string' ? req.query.q : req.query.id;
   const query = typeof rawQuery === 'string' ? rawQuery.trim() : '';
   if (!query) return res.json([]);
@@ -320,7 +323,7 @@ router.put('/account', auth, async (req, res) => {
   }
 });
 
-router.put('/avatar', auth, async (req, res) => {
+router.put('/avatar', auth, uploadRateLimit, async (req, res) => {
   const avatar = req.body?.avatar;
   const match = typeof avatar === 'string'
     ? avatar.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/)
