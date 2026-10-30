@@ -19,7 +19,12 @@ function getMongoUri(env = process.env) {
 
 async function connectToMongo(mongoose, env = process.env) {
   const uri = getMongoUri(env);
+  // Reuse an already established connection instead of opening a new one.
+  if (mongoose.connection && mongoose.connection.readyState === 1) {
+    return mongoose.connection;
+  }
   await mongoose.connect(uri, MONGOOSE_OPTIONS);
+  return mongoose.connection;
 }
 
 module.exports = { connectToMongo, getMongoUri };
