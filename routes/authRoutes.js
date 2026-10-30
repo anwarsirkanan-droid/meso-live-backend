@@ -10,6 +10,7 @@ const { withProfileMetadata } = require('../services/profileMetadata');
 const auth = require('../middleware/auth');
 const { revokeToken } = require('../services/tokenRevocationService');
 const { JWT_SECRET } = require('../middleware/authMiddleware');
+const { allocatePublicUserId } = require('../services/userIdService');
 const { calculateCharmLevel, calculateWealthLevel } = require('../config/levels');
 const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
@@ -85,6 +86,22 @@ function publicUser(user, googleProfile = {}) {
   };
 }
 
+async function ensurePublicId(user) {
+  if (!user) return null;
+  if (user.publicId != null) return user.publicId;
+  const mongoose = require('mongoose');
+  if (!mongoose.connection || mongoose.connection.readyState !== 1) {
+    return user.publicId;
+  }
+  try {
+    user.publicId = await allocatePublicUserId();
+    await user.save({ validateModifiedOnly: true });
+  } catch (error) {
+    console.error('Could not allocate public ID:', error);
+  }
+  return user.publicId;
+}
+
 router.get('/me', auth, async (req, res) => {
   if (!req.user?.id) {
     return res.status(401).json({ error: 'Invalid authentication token.' });
@@ -96,6 +113,7 @@ router.get('/me', auth, async (req, res) => {
       ? await userQuery.populate('agencyId', 'name agencyName')
       : await userQuery;
     if (!user) return res.status(404).json({ error: 'User not found.' });
+    await ensurePublicId(user);
 
     const profile = withProfileMetadata(user);
     delete profile.password;
@@ -251,6 +269,7 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Invalid username or password.' });
     }
 
+    await ensurePublicId(user);
     const isPasswordValid = typeof user.password === 'string' &&
       await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
@@ -306,6 +325,8 @@ router.post('/google', async (req, res) => {
     } else {
       user = await createGoogleUser(googleProfile);
     }
+
+    await ensurePublicId(user);
 
     return res.status(200).json({
       message: 'Google login successful!',

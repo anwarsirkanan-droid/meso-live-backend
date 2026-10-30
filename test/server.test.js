@@ -41,6 +41,7 @@ test('POST /api/auth/login is mounted, accepts email, and returns a token', asyn
     _id: '507f1f77bcf86cd799439011',
     username: 'test-user',
     email: 'test@example.com',
+    publicId: 1000032,
     password: passwordHash,
     role: 'USER',
   };
@@ -71,6 +72,7 @@ test('POST /api/auth/login is mounted, accepts email, and returns a token', asyn
   assert.deepEqual(lookup, { email: 'test@example.com' });
   assert.equal(typeof body.token, 'string');
   assert.equal(body.user.username, 'test-user');
+  assert.equal(body.user.publicId, 1000032);
   assert.equal(body.user.profileComplete, false);
 });
 

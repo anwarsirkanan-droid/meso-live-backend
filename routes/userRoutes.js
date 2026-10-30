@@ -8,6 +8,7 @@ const auth = require('../middleware/auth');
 const mongoose = require('mongoose');
 const { requireAdmin } = require('../middleware/adminAuth');
 const { withProfileMetadata } = require('../services/profileMetadata');
+const { allocatePublicUserId } = require('../services/userIdService');
 const { createRateLimiter } = require('../middleware/rateLimit');
 const uploadRateLimit = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 30, message: 'Too many upload requests. Please try again later.' });
 const searchRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 60, message: 'Too many search requests. Please try again later.' });
@@ -29,10 +30,27 @@ const normalizeUserId = (rawValue) => {
   return Number.isInteger(numericId) ? value : null;
 };
 
+async function ensurePublicId(user) {
+  if (!user) return null;
+  if (user.publicId != null) return user.publicId;
+  const mongoose = require('mongoose');
+  if (!mongoose.connection || mongoose.connection.readyState !== 1) {
+    return user.publicId;
+  }
+  try {
+    user.publicId = await allocatePublicUserId();
+    await user.save({ validateModifiedOnly: true });
+  } catch (error) {
+    console.error('Could not allocate public ID:', error);
+  }
+  return user.publicId;
+}
+
 const getProfile = async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-password').populate('agencyId', 'name agencyName');
     if (!user) return res.status(404).json({ message: 'User not found' });
+    await ensurePublicId(user);
     const profile = withProfileMetadata(user);
     // Ensure roles and publicId are included
     profile.role = user.role;
