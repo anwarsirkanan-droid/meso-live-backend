@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const mongoose = require('mongoose');
 const { connectToMongo } = require('../config/database');
+const { requireProductionWriteApproval } = require('./productionWriteGuard');
 const User = require('../models/User');
 
 const DEFAULT_TARGET_EMAIL = 'anwarsirkanan@gmail.com';
@@ -200,6 +201,7 @@ async function run() {
       return;
     }
 
+    requireProductionWriteApproval();
     await applyAccountSetup(User, plan, options);
     console.log('Account setup applied successfully.');
   } finally {

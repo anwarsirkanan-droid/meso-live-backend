@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const mongoose = require('mongoose');
 const { connectToMongo } = require('../config/database');
+const { requireProductionWriteApproval } = require('./productionWriteGuard');
 const User = require('../models/User');
 const Agency = require('../models/Agency');
 const HostReward = require('../models/HostReward');
@@ -104,6 +105,7 @@ async function ensureHostAgentUsers() {
 }
 
 async function run() {
+  requireProductionWriteApproval();
   await connectToMongo(mongoose);
   console.log(JSON.stringify(await ensureHostAgentUsers(), null, 2));
 }

@@ -173,30 +173,6 @@ module.exports = (io, socket) => {
   socket.on('ice-candidate', (payload) => relaySignal('ice-candidate', payload));
 
   // ═══════════════════════════════════════
-  // NEW: CHAT MESSAGE (Real-time)
-  // ═══════════════════════════════════════
-  socket.on('chat_message', async ({ roomId, text } = {}) => {
-    try {
-      if (!joinedRoomIds.has(roomId)) {
-        return socket.emit('error', { message: 'Join the room first' });
-      }
-      if (!text || typeof text !== 'string' || !text.trim()) {
-        return socket.emit('error', { message: 'Message cannot be empty' });
-      }
-      const user = await User.findById(userId).select('username avatar');
-      io.to(roomId).emit('chat_message', {
-        id: Date.now(),
-        userId,
-        username: user?.username || 'User',
-        avatar: user?.avatar,
-        text: text.trim().slice(0, 500),
-      });
-    } catch (err) {
-      socket.emit('error', { message: err.message });
-    }
-  });
-
-  // ═══════════════════════════════════════
   // NEW: NOTICE UPDATE (Host only)
   // ═══════════════════════════════════════
   socket.on('notice_update', async ({ roomId, notice } = {}) => {
