@@ -76,6 +76,43 @@ test('POST /api/auth/login is mounted, accepts email, and returns a token', asyn
   assert.equal(body.user.profileComplete, false);
 });
 
+test('POST /api/auth/login keeps the owner public ID permanent', async (context) => {
+  const password = 'test-password';
+  const passwordHash = await bcrypt.hash(password, 4);
+  const user = {
+    _id: '507f1f77bcf86cd799439012',
+    username: 'owner-user',
+    email: 'anwarsirkanan@gmail.com',
+    password: passwordHash,
+    role: 'ADMIN',
+    publicId: 999999,
+    async save(options) {
+      this.savedOptions = options;
+    },
+  };
+  const originalFindOne = User.findOne;
+  User.findOne = async () => user;
+
+  const server = app.listen(0);
+  context.after(async () => {
+    User.findOne = originalFindOne;
+    await new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  });
+  await new Promise((resolve) => server.once('listening', resolve));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'anwarsirkanan@gmail.com', password }),
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.user.publicId, 1000000);
+});
+
 test('GET /api/auth/me returns a valid public profile and reports lookup failures', async (context) => {
   const originalFindById = User.findById;
   const user = {

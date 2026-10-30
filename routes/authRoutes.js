@@ -86,8 +86,36 @@ function publicUser(user, googleProfile = {}) {
   };
 }
 
+const OWNER_EMAIL = 'anwarsirkanan@gmail.com';
+const OWNER_PUBLIC_ID = 1000000;
+
+function isOwnerAccount(user) {
+  return Boolean(user && String(user.email || '').trim().toLowerCase() === OWNER_EMAIL);
+}
+
 async function ensurePublicId(user) {
   if (!user) return null;
+  if (isOwnerAccount(user)) {
+    if (user.publicId !== OWNER_PUBLIC_ID) {
+      const mongoose = require('mongoose');
+      if (mongoose.connection && mongoose.connection.readyState === 1) {
+        try {
+          const conflict = await User.findOne({ publicId: OWNER_PUBLIC_ID, _id: { $ne: user._id } });
+          if (conflict) {
+            console.error('Public ID 1000000 is already owned by another account; owner correction skipped.');
+            return user.publicId;
+          }
+          user.publicId = OWNER_PUBLIC_ID;
+          await user.save({ validateModifiedOnly: true });
+        } catch (error) {
+          console.error('Could not correct owner public ID:', error);
+        }
+      } else {
+        user.publicId = OWNER_PUBLIC_ID;
+      }
+    }
+    return OWNER_PUBLIC_ID;
+  }
   if (user.publicId != null) return user.publicId;
   const mongoose = require('mongoose');
   if (!mongoose.connection || mongoose.connection.readyState !== 1) {
