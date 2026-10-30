@@ -4,6 +4,33 @@ const User = require('../models/User');
 const { recordHostTime } = require('../services/hostDailyTaskService');
 
 
+const roomViewers = new Map(); // roomId -> Map<userId, count>
+
+function addViewer(roomId, userId) {
+  if (!roomViewers.has(roomId)) roomViewers.set(roomId, new Map());
+  const viewers = roomViewers.get(roomId);
+  const prev = viewers.get(userId) || 0;
+  viewers.set(userId, prev + 1);
+  return prev === 0; // true if newly added
+}
+
+function removeViewer(roomId, userId) {
+  const viewers = roomViewers.get(roomId);
+  if (!viewers) return false;
+  const prev = viewers.get(userId) || 0;
+  if (prev <= 1) {
+    viewers.delete(userId);
+    if (viewers.size === 0) roomViewers.delete(roomId);
+    return prev > 0; // true if removed
+  }
+  viewers.set(userId, prev - 1);
+  return false;
+}
+
+function viewerCountFor(roomId) {
+  const viewers = roomViewers.get(roomId);
+  return viewers ? viewers.size : 0;
+}
 module.exports = (io, socket) => {
   const joinedRoomIds = new Map();
   const joiningRoomIds = new Map();
@@ -95,14 +122,19 @@ module.exports = (io, socket) => {
       const isHost = room.ownerId.toString() === userId;
       await socket.join(roomId);
       joinedRoomIds.set(roomId, isHost);
-      const update = { $inc: { currentListenersCount: 1 } };
-      if (isHost) update.$set = { isLive: true };
+      const isNewViewer = addViewer(roomId, userId);
+      const update = isNewViewer ? { $inc: { currentListenersCount: 1 } } : {};
+      if (isHost) update.$set = { ...(update.$set || {}), isLive: true };
 
       const updatedRoom = await Room.findByIdAndUpdate(
         roomId,
         update,
         { new: true }
       ).populate('seats.userId', 'username avatar customId');
+
+      if (updatedRoom) {
+        // keep DB count authoritative
+      }
 
       if (!updatedRoom) {
         await socket.leave(roomId);
@@ -111,6 +143,7 @@ module.exports = (io, socket) => {
 
       joinedRoomIds.set(roomId, isHost);
       io.to(roomId).emit('room_updated', updatedRoom);
+      io.to(roomId).emit('viewer_count', { count: updatedRoom.currentListenersCount });
       io.to(roomId).emit('user_joined', {
         userId,
         currentListenersCount: updatedRoom.currentListenersCount
@@ -268,10 +301,11 @@ module.exports = (io, socket) => {
       }
     }
     await socket.leave(roomId);
+    const wasRemoved = removeViewer(roomId, userId);
     const update = {
-      $inc: { currentListenersCount: -1 },
       $set: { 'seats.$[seat].userId': null }
     };
+    if (wasRemoved) update.$inc = { currentListenersCount: -1 };
     if (isHost) update.$set.isLive = false;
 
     let room = await Room.findOneAndUpdate(
@@ -295,6 +329,7 @@ module.exports = (io, socket) => {
     if (!room) return;
 
     io.to(roomId).emit('room_updated', room);
+    io.to(roomId).emit('viewer_count', { count: room.currentListenersCount });
     io.to(roomId).emit('user_left', {
       userId,
       currentListenersCount: room.currentListenersCount

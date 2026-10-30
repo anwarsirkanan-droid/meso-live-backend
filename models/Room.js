@@ -54,6 +54,12 @@ const roomSchema = new mongoose.Schema({
     default: 'free'
   },
 
+  seatCapacity: {
+    type: Number,
+    enum: [10, 15, 25],
+    default: 25,
+  },
+
   // Maximum of 25 seats, indexed from 0 to 24.
   seats: [{
     seatIndex: {

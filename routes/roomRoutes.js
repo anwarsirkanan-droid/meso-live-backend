@@ -239,6 +239,24 @@ async function updateRoomDetails(req, res) {
       updates.notice = notice;
     }
 
+    const capacityInput = body.seatCapacity ?? body.capacity ?? body.seatCount;
+    if (capacityInput !== undefined) {
+      if (!isOwner) {
+        return res.status(403).json({ message: 'Only the room owner can change seat capacity.' });
+      }
+      const capacity = Number(capacityInput);
+      if (![10, 15, 25].includes(capacity)) {
+        return res.status(400).json({ message: 'Seat capacity must be 10, 15, or 25.' });
+      }
+      // Occupied-seat protection.
+      const occupiedAbove = (room.seats || []).filter((seat) => seat?.userId && seat.seatIndex >= capacity);
+      if (occupiedAbove.length > 0) {
+        const seatNumbers = occupiedAbove.map((seat) => seat.seatIndex + 1).sort((a, b) => a - b).join(', ');
+        return res.status(400).json({ message: `Vacate seat(s) ${seatNumbers} before reducing capacity.` });
+      }
+      updates.seatCapacity = capacity;
+    }
+
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ message: 'At least one room field is required.' });
     }
