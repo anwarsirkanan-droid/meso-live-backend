@@ -647,6 +647,15 @@ router.post('/:roomId/moderate/kick/:userId', auth, isOwnerOrAdmin, async (req, 
       seat.userId = null;
       await req.room.save();
     }
+    const io = req.app.get('io');
+    if (io) {
+      io.to(roomId).emit('room_updated', req.room);
+      for (const [socketId, socket] of io.sockets.sockets) {
+        if (socket.data?.userId === req.params.userId) {
+          socket.emit('removed_from_room', { roomId, userId: req.params.userId });
+        }
+      }
+    }
     res.json({ message: 'User kicked from seat successfully', room: req.room });
   } catch (err) {
     res.status(500).json({ message: err.message });
