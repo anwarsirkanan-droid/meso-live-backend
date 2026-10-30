@@ -550,6 +550,20 @@ router.post('/:roomId/seat/:seatIndex/take', auth, async (req, res, next) => {
       return res.status(403).json({ message: 'You are banned from entering this room.' });
     }
 
+    // Seat 0 (the first seat) is permanently reserved for the room owner/host.
+    if (seatIndex === 0 && String(room.ownerId) !== req.user.id) {
+      return res.status(403).json({ message: 'Seat 1 is reserved for the room owner.' });
+    }
+
+    // If the owner is taking seat 0, clear them from any other seat first.
+    if (seatIndex === 0 && String(room.ownerId) === req.user.id) {
+      await Room.updateOne(
+        { _id: roomId },
+        { $set: { 'seats.$[s].userId': null } },
+        { arrayFilters: [{ 's.userId': req.user.id, 's.seatIndex': { $ne: 0 } }] }
+      );
+    }
+
     const updatedRoom = await Room.findOneAndUpdate(
       {
         _id: roomId,
